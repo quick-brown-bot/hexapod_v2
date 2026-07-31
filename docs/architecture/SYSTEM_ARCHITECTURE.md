@@ -315,11 +315,12 @@ events detected from current spikes can influence gait decisions in real time.
 
 ### Input, Transport, And Control
 
-Identical to V1. See common documentation.
+Identical to V1. See [../interfaces/CONTROLLER_DRIVERS.md](../interfaces/CONTROLLER_DRIVERS.md).
 
 ### RPC, Configuration, And Shared Contracts
 
-Identical to V1. See common documentation.
+Identical to V1. See [../interfaces/RPC_SYSTEM_DESIGN.md](../interfaces/RPC_SYSTEM_DESIGN.md) and
+[../configuration/CONFIGURATION_PERSISTENCE_DESIGN.md](../configuration/CONFIGURATION_PERSISTENCE_DESIGN.md).
 
 ---
 

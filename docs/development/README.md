@@ -1,11 +1,11 @@
-# Development Setup — V2
+# Development Setup
 
 ## Purpose
 
-This document is the software-side starting point for V2 development. V2
-involves two separate firmware projects and two toolchains, and hardware
-bring-up must follow a specific sequence because the mainboard and six
-LegBoards depend on each other over RS485.
+This document is the software-side starting point for development. The
+project involves two separate firmware projects and two toolchains, and
+hardware bring-up must follow a specific sequence because the mainboard and
+six LegBoards depend on each other over RS485.
 
 ---
 
@@ -23,32 +23,27 @@ Read these first:
 
 ```
 firmware/
-  v2/
-    mainboard/       ESP32 firmware — motion control, RS485 master, RPC, config
-    leg/             RP2040 firmware — servo PWM, interpolation, current sensing
+  mainboard/       ESP32 firmware — motion control, RS485 master, RPC, config
+  leg/             RP2040 firmware — servo PWM, interpolation, current sensing
 
 docs/
-  v2/
-    architecture/    SYSTEM_ARCHITECTURE.md, HARDWARE_AND_MECHANICS.md
-    interfaces/      RS485_PROTOCOL.md
-    development/     This file
+  architecture/    SYSTEM_ARCHITECTURE.md, HARDWARE_AND_MECHANICS.md
+  interfaces/      RS485_PROTOCOL.md
+  development/     This file
 
 hardware/
-  v2/
-    mainboard/       ESP32 MainBoard schematic (Python source + KiCad output)
-    legboard/        RP2040 LegBoard schematic
-    powerboard/      MainPowerBoard schematic
+  mainboard/       ESP32 MainBoard schematic (Python source + KiCad output)
+  legboard/        RP2040 LegBoard schematic
+  powerboard/      MainPowerBoard schematic
 ```
 
 ---
 
 ## Development Environment
 
-V2 requires two toolchains side by side.
+This project requires two toolchains side by side.
 
 ### Mainboard — ESP32 (ESP-IDF)
-
-Identical to V1.
 
 - ESP-IDF 5.x
 - Visual Studio Code with the official ESP-IDF extension
@@ -248,7 +243,7 @@ Common failure modes:
 
 ## Practical First Steps
 
-For a new V2 contributor:
+For a new contributor:
 
 1. Read the three architecture docs listed at the top of this file.
 2. Set up both toolchains (ESP-IDF and PlatformIO) and verify each builds.
