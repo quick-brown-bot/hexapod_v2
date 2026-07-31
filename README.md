@@ -9,6 +9,12 @@ The project combines firmware, hardware design, and system documentation in a si
 > 6 legs, 18 servos, ESP32 mainboard, distributed RP2040 leg controllers over
 > an RS485 bus, per-servo current sensing.
 
+This is a continuation of the original [Hexabot](https://github.com/quick-brown-bot/hexapod) project, developed here in
+[`hexapod_v2`](https://github.com/quick-brown-bot/hexapod_v2). It differs from
+the original mainly in electronics architecture — distributed RP2040 leg
+controllers over RS485 instead of a single ESP32 driving all servos directly —
+and adds new features such as per-servo current sensing.
+
 ---
 
 ## What Is In This Repository
