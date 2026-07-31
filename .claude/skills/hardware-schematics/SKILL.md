@@ -2,7 +2,7 @@
 name: hardware-schematics
 description: >-
   Author and maintain this repo's KiCad electrical schematics as Python code —
-  the boards under hardware/ (servo_mainboard, leg, esp32_connector) whose
+  the boards under hardware/ (mainboard, legboard, powerboard) whose
   .kicad_sch files are generated from .py source. Use this skill whenever the
   user wants to define, edit, generate, or migrate a schematic / netlist /
   circuit / components / nets / connectors as code, set up or use the
@@ -18,9 +18,9 @@ description: >-
 # Hardware schematics as code
 
 This repo's electrical designs live under `hardware/` as KiCad projects
-(`servo_mainboard/hexapod`, `leg/leg_v2`, `esp32_connector`). The goal of this
-skill is to author those schematics from **Python source of truth** that
-generates the `.kicad_sch` files, instead of editing them by hand in Eeschema.
+(`mainboard`, `legboard`, `powerboard`). The goal of this skill is to author
+those schematics from **Python source of truth** that generates the
+`.kicad_sch` files, instead of editing them by hand in Eeschema.
 
 The `.kicad_sch` format is plain S-expressions — no external library is needed,
 pure Python reads and writes it.
@@ -132,12 +132,12 @@ for migrated boards), so the script builds the whole schematic from primitives.
 ```python
 from hardware.schematic import Schematic, UuidRegistry
 
-reg = UuidRegistry("hardware/v2/<board>/uuids.json")
+reg = UuidRegistry("hardware/<board>/uuids.json")
 sch = Schematic.new("<board>", reg, paper="A4")   # root uuid comes from registry
 
 # Every part needs its symbol definition imported from a .kicad_sym library once;
 # unlike a migrated board, a new sheet starts with an empty lib_symbols cache.
-sch.import_lib_symbol("hardware/v2/symbols/Seeed_Studio_XIAO_Series.kicad_sym",
+sch.import_lib_symbol("hardware/symbols/Seeed_Studio_XIAO_Series.kicad_sym",
                       "Seeed_Studio_XIAO_Series:XIAO-RP2040-DIP")
 u1 = sch.place("Seeed_Studio_XIAO_Series:XIAO-RP2040-DIP", "U1", at=(100, 100),
                footprint="Seeed_Studio_XIAO_Series:XIAO-RP2040-DIP")
@@ -148,7 +148,7 @@ r1 = sch.place("Device:R_Small", "R1", at=(80, 90), value="470", rotation=90,
 
 sch.net("LED_OUT", [u1.pin("IO2"), r1.pin("1")])   # connect by net label
 
-sch.write("hardware/v2/<board>/<board>.kicad_sch")
+sch.write("hardware/<board>/<board>.kicad_sch")
 ```
 
 Key differences from a migrated board:
@@ -157,7 +157,7 @@ Key differences from a migrated board:
   Re-running rebuilds the sheet from scratch, so it is naturally idempotent.
 - **Import every symbol.** `import_lib_symbol(<.kicad_sym>, <lib_id>)` must run
   before the first `place()` of each new part type. In-repo libraries live at
-  `hardware/v2/symbols/` and `hardware/v2/SymbolsLib.kicad_sym`; stock KiCad symbols
+  `hardware/symbols/` and `hardware/SymbolsLib.kicad_sym`; stock KiCad symbols
   (`Device:*`, `power:*`) come from the KiCad install's libraries.
 - **UUID stability still applies** the moment you first lay out the PCB: from then
   on, `uuids.json` is what protects the layout, exactly as for a migrated board.
@@ -175,7 +175,7 @@ one from an existing board and update the name.
 ### Migrating an existing schematic into code (one-time per board)
 
 ```bash
-python -m hardware.schematic.migrate hardware/v2/leg/leg_v2.kicad_sch
+python -m hardware.schematic.migrate hardware/<board>/<board>.kicad_sch
 ```
 
 The migrator freezes the original as `<board>.base.kicad_sch`, **seeds
@@ -183,15 +183,16 @@ The migrator freezes the original as `<board>.base.kicad_sch`, **seeds
 designator), and emits `<board>_sch.py` (which loads the frozen base, applies your
 edits, and writes the working `.kicad_sch`). Because the engine round-trips
 untouched trees byte-for-byte, a freshly migrated board regenerates with **no UUID
-churn** — verify with `git diff`. The boards under `hardware/v2/` (`leg_v2`,
-`esp32_connector`, `hexapod`) are not migrated yet; when migrating one, start with
-the smallest and confirm the byte-exact round-trip before trusting it on a large
-board. Commit a board's migration (`<board>_sch.py`, `<board>.base.kicad_sch`,
-`uuids.json`) only once you've verified its PCB footprint links still resolve.
+churn** — verify with `git diff`. All current boards (`mainboard`, `legboard`,
+`powerboard`) are already code-driven; only run this against a new board authored
+by hand outside this workflow. Start with the smallest and confirm the
+byte-exact round-trip before trusting it on a large board. Commit a board's
+migration (`<board>_sch.py`, `<board>.base.kicad_sch`, `uuids.json`) only once
+you've verified its PCB footprint links still resolve.
 
 ## The toolchain
 
-`hardware/v2/schematic/` already exists (see its `README.md`):
+`hardware/schematic/` already exists (see its `README.md`):
 
 - `sexpr.py` — lossless S-expression parser + KiCad-faithful serializer. Round-trips
   every board byte-for-byte; preserving each atom's source text is what keeps diffs

@@ -1,8 +1,0 @@
-# FreeCAD autosave / lock
-*.FCStd1
-*.FCBak
-*.autosave
-*.lock
-
-# Temporary
-~*

@@ -6,8 +6,8 @@ The goal is not just to make a robot walk, but to learn and at the same time bui
 
 The project combines firmware, hardware design, and system documentation in a single repository.
 
-> V1 (operational): 6 legs, 18 servos, ESP32, ESP-IDF, FreeRTOS, direct PWM.
-> V2 (in development): distributed RP2040 leg controllers, RS485 bus, per-servo current sensing.
+> 6 legs, 18 servos, ESP32 mainboard, distributed RP2040 leg controllers over
+> an RS485 bus, per-servo current sensing.
 
 ---
 
@@ -17,24 +17,24 @@ The repository contains software and hardware assets used to develop and validat
 
 ```text
 firmware/
-├── v1/
-│   └── mainboard/     Main robot firmware (ESP32, direct PWM)
-└── v2/
-    ├── mainboard/     V2 ESP32 firmware (in development)
-    └── leg/           RP2040 leg controller firmware (in development)
+├── mainboard/             ESP32 mainboard firmware (RS485 master)
+├── leg/                   RP2040 leg controller firmware
+└── mainboard_rs485_test/  Standalone RS485 bring-up/benchmark tool
 
 hardware/
-├── v1/                V1 schematics
-└── v2/                V2 schematics (mainboard, legboard, powerboard)
+├── mainboard/             MainBoard schematic (ESP32 + IMU + RS485 master)
+├── legboard/               LegBoard schematic (RP2040, servo PWM, current sensing)
+└── powerboard/            MainPowerBoard schematic (battery, fusing, UBEC/SBEC)
 
 docs/
-├── common/            Docs shared across versions (RPC, WiFi, config)
-├── v1/                V1-specific architecture and development docs
-├── v2/                V2-specific architecture and development docs
-└── plans/             Project-wide backlog and research items
+├── architecture/          System architecture, hardware and mechanics
+├── interfaces/            RS485, RPC, WiFi, Bluetooth, controller driver protocols
+├── configuration/         Configuration platform design
+├── development/           Build, flash, and dev workflow
+└── plans/                 Project-wide backlog and research items
 ```
 
-Mainboard firmware overview: [firmware/v1/mainboard/README.md](firmware/v1/mainboard/README.md)
+Mainboard firmware overview: [firmware/mainboard/README.md](firmware/mainboard/README.md)
 
 The main firmware is built around a fixed 100 Hz control loop and a modular motion pipeline:
 
@@ -69,18 +69,12 @@ Servo Outputs
 
 ## Hardware Snapshot
 
-**V1 (current robot):**
-- MCU: ESP32 running FreeRTOS through ESP-IDF.
+- MCUs: ESP32 mainboard (FreeRTOS via ESP-IDF) + 6 × XIAO RP2040 (one per leg).
 - Robot layout: 6 legs, 3 degrees of freedom per leg, 18 hobby servos total.
-- Power: 4S LiPo, separate UBEC paths for servo and logic power.
-- PWM: mixed MCPWM and LEDC to reach all 18 outputs on the ESP32.
-- Mechanical: custom 3D-printed chassis and leg parts.
-
-**V2 (in development):**
-- MCUs: ESP32 (mainboard) + 6 × XIAO RP2040 (one per leg).
-- Communication: RS485 multi-drop bus connecting mainboard to all six leg controllers.
+- Communication: RS485 multi-drop bus connecting the mainboard to all six leg controllers.
 - Sensing: INA4181 4-channel current sensing per LegBoard for ground-contact detection.
-- Power: dedicated MainPowerBoard with three UBECs (servo) and one SBEC (logic), fully isolated.
+- Power: dedicated MainPowerBoard with three UBECs (servo) and one SBEC (logic), fully isolated from logic power.
+- Mechanical: custom 3D-printed chassis and leg parts.
 
 ## High-Level Architecture
 
@@ -190,24 +184,21 @@ Current focus areas include:
 
 ---
 
-## V2 Hardware (In Development)
+## Hardware Architecture
 
-V2 introduces distributed leg controllers and full separation of logic and servo
-power. The architecture is defined and schematics are authored; firmware is in
-development.
+Distributed leg controllers with full separation of logic and servo power. The
+architecture is defined and schematics are authored; firmware is in development.
 
-### What Changes in V2
-
-- **Three boards** replace the single V1 board: MainBoard (ESP32 + IMU + RS485
-  master), LegBoard × 6 (XIAO RP2040, servo PWM, per-servo current sensing),
-  MainPowerBoard (battery, fusing, UBEC/SBEC distribution).
-- **ESP32 no longer generates servo PWM.** Joint commands are sent over RS485;
+- **Three boards**: MainBoard (ESP32 + IMU + RS485 master), LegBoard × 6 (XIAO
+  RP2040, servo PWM, per-servo current sensing), MainPowerBoard (battery,
+  fusing, UBEC/SBEC distribution).
+- **The ESP32 does not generate servo PWM.** Joint commands are sent over RS485;
   each RP2040 generates PWM locally and interpolates between targets.
 - **Per-servo current sensing** on every LegBoard enables ground-contact
   detection from current spikes without dedicated force sensors.
 - **Servo current is fully isolated from the MainBoard** at the hardware level.
 
-See [`docs/v2/`](docs/v2/) for the full V2 architecture and interface documentation.
+See [`docs/architecture/`](docs/architecture/) for the full architecture and interface documentation.
 
 ---
 
@@ -215,22 +206,13 @@ See [`docs/v2/`](docs/v2/) for the full V2 architecture and interface documentat
 
 The repository contains detailed documentation covering implementation details and architecture decisions.
 
-Documentation is versioned to match firmware and hardware.
-
-**V1 (operational):**
-- [docs/v1/architecture/SYSTEM_ARCHITECTURE.md](docs/v1/architecture/SYSTEM_ARCHITECTURE.md)
-- [docs/v1/architecture/HARDWARE_AND_MECHANICS.md](docs/v1/architecture/HARDWARE_AND_MECHANICS.md)
-- [firmware/v1/mainboard/README.md](firmware/v1/mainboard/README.md)
-
-**V2 (in development):**
-- [docs/v2/architecture/SYSTEM_ARCHITECTURE.md](docs/v2/architecture/SYSTEM_ARCHITECTURE.md)
-- [docs/v2/architecture/HARDWARE_AND_MECHANICS.md](docs/v2/architecture/HARDWARE_AND_MECHANICS.md)
-- [docs/v2/interfaces/RS485_PROTOCOL.md](docs/v2/interfaces/RS485_PROTOCOL.md)
-- [docs/v2/development/README.md](docs/v2/development/README.md)
-
-**Common (shared across versions):**
-- [docs/common/interfaces/RPC_USER_GUIDE.md](docs/common/interfaces/RPC_USER_GUIDE.md)
-- [docs/common/configuration/CONFIGURATION_PERSISTENCE_DESIGN.md](docs/common/configuration/CONFIGURATION_PERSISTENCE_DESIGN.md)
+- [docs/architecture/SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md)
+- [docs/architecture/HARDWARE_AND_MECHANICS.md](docs/architecture/HARDWARE_AND_MECHANICS.md)
+- [docs/interfaces/RS485_PROTOCOL.md](docs/interfaces/RS485_PROTOCOL.md)
+- [docs/development/README.md](docs/development/README.md)
+- [docs/interfaces/RPC_USER_GUIDE.md](docs/interfaces/RPC_USER_GUIDE.md)
+- [docs/configuration/CONFIGURATION_PERSISTENCE_DESIGN.md](docs/configuration/CONFIGURATION_PERSISTENCE_DESIGN.md)
+- [firmware/mainboard/README.md](firmware/mainboard/README.md)
 
 Full documentation index: [docs/README.md](docs/README.md)
 

@@ -34,6 +34,7 @@
 *.ipc
 *.fab
 *.assembly
+*.rpt
 
 # BOM exports (if auto-generated)
 *BOM*.csv
@@ -63,6 +64,15 @@ gerbers/
 plots/
 fab/
 production/
+
+# =========================
+# Schematic-as-code toolchain
+# =========================
+
+__pycache__/
+*.pyc
+_autosave*
+net.net
 
 # =========================
 # OS / editor junk

@@ -1,4 +1,0 @@
-(sym_lib_table
-  (version 7)
-  (lib (name "Hexapod_V2")(type "KiCad")(uri "C:/code/hexapod/hardware/v2/symbols/Hexapod_V2.kicad_sym")(options "")(descr ""))
-)

@@ -2,7 +2,7 @@
 
 KiCad 9 (`version 20250114`, `generator "eeschema"`). The file is a single
 nested S-expression. Indentation is tabs. This reference captures the shapes the
-generator must emit. Source examples are the real boards under `hardware/v2/`.
+generator must emit. Source examples are the real boards under `hardware/`.
 
 ## Top-level skeleton
 

@@ -68,8 +68,8 @@ Rules the generator must honour:
 After any change, the regenerated board must not move existing footprints:
 
 ```bash
-python hardware/v2/<board>/<board>_sch.py
-git diff hardware/v2/<board>/uuids.json    # additions only for unchanged parts
+python hardware/<board>/<board>_sch.py
+git diff hardware/<board>/uuids.json    # additions only for unchanged parts
 # open in KiCad → Update PCB from Schematic → existing parts stay placed
 ```
 

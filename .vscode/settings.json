@@ -1,19 +1,19 @@
 {
     "chat.tools.terminal.autoApprove": {
-        "/^python hardware/v2/legboard/legboard_sch\\.py$/": {
+        "/^python hardware/legboard/legboard_sch\\.py$/": {
             "approve": true,
             "matchCommandLine": true
         },
         "kicad-cli": true,
-        "/^python \\.\\\\hardware\\\\v2\\\\mainboard\\\\mainboard_sch\\.py$/": {
+        "/^python \\.\\\\hardware\\\\mainboard\\\\mainboard_sch\\.py$/": {
             "approve": true,
             "matchCommandLine": true
         },
-        "/^python \\.\\\\hardware\\\\v2\\\\mainboard\\\\mainboard_sch\\.py ; git diff hardware/v2/mainboard/$/": {
+        "/^python \\.\\\\hardware\\\\mainboard\\\\mainboard_sch\\.py ; git diff hardware/mainboard/$/": {
             "approve": true,
             "matchCommandLine": true
         },
-        "/^python hardware/v2/mainboard/mainboard_sch\\.py$/": {
+        "/^python hardware/mainboard/mainboard_sch\\.py$/": {
             "approve": true,
             "matchCommandLine": true
         }
