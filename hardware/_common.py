@@ -67,6 +67,7 @@ BATTERY_SOLDER_PADS_2P_FOOTPRINT = (
 # Verify the LVK12 power rating against the exact part before freezing.
 SHUNT_R010_KELVIN_FOOTPRINT = "Resistor_SMD:R_Shunt_Ohmite_LVK12"
 RES_0805_FOOTPRINT = "Resistor_SMD:R_0805_2012Metric"
+RES_1206_FOOTPRINT = "Resistor_SMD:R_1206_3216Metric"
 CAP_0805_FOOTPRINT = "Capacitor_SMD:C_0805_2012Metric"
 BULK_CAP_10UF_FOOTPRINT = "Capacitor_THT:CP_Radial_D4.0mm_P2.00mm"
 BULK_CAP_470UF_FOOTPRINT = "Capacitor_THT:CP_Radial_D8.0mm_P3.50mm"
@@ -80,6 +81,15 @@ DIODE_0805_FOOTPRINT = "Diode_SMD:D_0805_2012Metric"
 FUSE_20A_FOOTPRINT = "Fuse:Fuse_1206_3216Metric"
 SOLDER_PADS_4P_FOOTPRINT = "Custom:SolderWirePad_4x01_SMD_3x4mm"
 MASTER_SWITCH_FOOTPRINT = "Custom:SW_Slide_SPDT_Straight"
+# calboard (bench current-calibration adapter) parts.
+NMOS_SOT23_FOOTPRINT = "Package_TO_SOT_SMD:SOT-23"
+SHIFT_REG_DIP16_FOOTPRINT = "Package_DIP:DIP-16_W7.62mm"
+# Placeholder axial THT footprint for the two higher-dissipation ladder legs
+# (R3/R4 per channel) — verify actual power rating/part before fab, see
+# firmware/calboard/README.md "Bring-Up Status/TODO".
+RES_POWER_AXIAL_FOOTPRINT = (
+    "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal"
+)
 
 def _kicad_symbol_dir() -> Path:
     """Locate the installed KiCad stock symbol libraries.

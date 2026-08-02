@@ -11,6 +11,12 @@ Three boards:
 | [LegBoard](legboard/) | [`legboard_sch.py`](legboard/legboard_sch.py) | XIAO RP2040 + SP3485 + 3 servos + sensing. One per leg. |
 | [MainPowerBoard](powerboard/) | [`powerboard_sch.py`](powerboard/powerboard_sch.py) | Battery → fuse/switch/protection → 3 UBECs + SBEC → legs. |
 
+There's also one bench-only tool, not part of the robot itself:
+
+| Board | Source | Role |
+|-------|--------|------|
+| [calboard](calboard/) | [`calboard_sch.py`](calboard/calboard_sch.py) | XIAO RP2040 + resistor ladder. Plugs into a LegBoard's servo connectors in place of real servos to calibrate its current sensing — see [`firmware/calboard/README.md`](../firmware/calboard/README.md) and [`tools/current_calibration/`](../tools/current_calibration/). |
+
 These schematics are authored **as code** with the
 [`hardware-schematics`](schematic/README.md) toolchain. The Python script is
 the source of truth; `uuids.json` is the committed UUID registry that protects
