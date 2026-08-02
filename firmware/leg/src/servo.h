@@ -36,6 +36,24 @@ servo_calib_t *servo_get_calib(int joint);
 // the servo's physical range.
 bool servo_write_angle(int joint, float angle_deg);
 
+// Command a joint directly to a raw pulse width in microseconds, bypassing
+// angle calibration. For bring-up/calibration use only (see calib.cpp's
+// PWM command and tools/current_calibration) — clamps to
+// [pwm_min_us, pwm_max_us] for that joint. Returns true if clamped.
+//
+// While a joint is in this raw-override state, servo_write_angle() for that
+// joint is a no-op (so the 1 kHz interpolation control loop doesn't stomp
+// the raw pulse every tick). The override is cleared automatically the next
+// time a real RS485 pull frame sets a target for that joint — see
+// servo_clear_override() — so normal operation resumes as soon as the
+// master reconnects.
+bool servo_write_pulse_us(int joint, int32_t pulse_us);
+
+// Clear the raw-pulse override for a joint, restoring normal
+// servo_write_angle() behavior. Called by main.cpp when a real RS485 pull
+// sets a target for that joint.
+void servo_clear_override(int joint);
+
 #ifdef __cplusplus
 }
 #endif

@@ -23,8 +23,13 @@ favor of talking to the target's own USB console directly.)
 Plug the target LegBoard into your PC via USB, then:
 
 ```bash
-python tools/leg_configurator.py --port COM10   # or whatever port it enumerates as
+python tools/leg_configurator.py
 ```
+
+The port is auto-detected (it looks for the RP2040's USB VID, so unrelated
+ports like Bluetooth virtual COM ports are filtered out first) — pass
+`--port COM10` explicitly if you ever need to override it, e.g. more than
+one RP2040 board is plugged in at once.
 
 (If you don't have `pyserial` in your default Python, run this with
 PlatformIO's bundled interpreter instead — see the script's `--help`.)
@@ -60,20 +65,47 @@ by least squares (not just two points), calling out the exact connector
 (e.g. "J2 (coxa)") at each step:
 
 1. **Zero point.** Disconnect the servo from this channel (open circuit — no
-   load) and confirm. Reads the raw ADC millivolt value via `CURRAW?`. Done
-   first, before any resistors, so it both anchors the fit at the one
-   reference current we know exactly (0 mA) and immediately catches a
-   disconnected/miswired channel before you spend time on resistor points.
+   load) and confirm. Measures the raw ADC millivolt value via `CURRAW?`,
+   averaged over 5 individual readings. Done first, before any resistors, so
+   it both anchors the fit at the one reference current we know exactly
+   (0 mA) and immediately catches a disconnected/miswired channel before you
+   spend time on resistor points.
 2. **Span points.** Attach each of four suggested THT resistor values in
    turn — **470 Ω, 220 Ω, 100 Ω, 47 Ω** (common E12 values, low-to-high
-   current) — confirming and entering the measured/computed reference
-   current (mA) for each. The wizard prints the minimum power rating needed
-   per value (table below) — these are deliberately small, low-power loads;
-   you do **not** need to source amps through a resistor.
+   current). No confirmation keypress needed for the attach step itself: the
+   wizard live-updates the raw reading on one line and auto-detects once it
+   has moved away from the zero-point baseline and settled (on Windows, you
+   can also just press Enter to force a manual reading, e.g. if the change
+   is too small to trip the threshold). Once settled, it takes the recorded
+   value as an average of 5 fresh individual readings — not just whichever
+   single noisy poll happened to trip the detector. It then asks for the
+   reference current (mA), defaulting to whatever you entered for that
+   resistor value last time — press Enter to accept — or a theoretical `V/R`
+   guess on the very first run. The wizard prints the minimum power rating
+   needed per value (table below) — these are deliberately small, low-power
+   loads; you do **not** need to source amps through a resistor.
 3. The wizard fits `current_ma = scale × raw_mv + offset` by ordinary least
    squares over all 5 points (1 zero + 4 span) and persists it with
    `CURCAL <ch> <scale> <offset>` — the same command `calib.cpp` already
    exposes for manual/bench calibration.
+4. **`total` is calibrated too, for free.** `CURRAW?` reports all 4
+   channels on every poll, so every coxa/femur/tibia zero/span measurement
+   above doubles as a `total` (channel 0) data point at no extra cost — no
+   separate steps, no extra resistor attachments. After all selected
+   branches are done, the wizard fits and persists `total` from whatever
+   points got collected along the way. **This is only valid if the other
+   two branches stay disconnected for the entire session**, not just their
+   own step — the wizard prints a reminder before starting. If you only ran
+   a subset of channels (`--channels`), `total`'s fit is based on just
+   those branches' points.
+
+**Redo a step, or just re-measure.** Made a mistake — wrong resistor,
+mis-typed current, bumped a lead? At any reference-current prompt (or as a
+bare keypress while a reading is live, on Windows):
+- `b` discards the current step and redoes the *previous* one. Going back
+  from the first resistor step redoes the zero point too.
+- `r` re-measures the *current* step in place (same resistor, fresh
+  reading) without losing your spot in the sequence.
 
 | Load     | ≈ current @ 6V rail | Min. resistor power |
 |----------|---------------------|----------------------|
@@ -129,12 +161,12 @@ That's a hard ADC-saturation ceiling — no calibration, software or
 otherwise, can measure above it on the current hardware. It's adequate for
 a single servo branch (coxa/femur/tibia), but the `total` channel sums up to
 three branches and can see meaningfully more under worst-case simultaneous
-stall — which is also why `total` isn't covered by this wizard: it sees the
-sum of all three branches at once, so it can't be isolated with a single
-test resistor the way each branch can. A shunt change for the total channel
-only (R4: 10 mΩ → ~3 mΩ, raising its ceiling to ~11 A) is planned but not
-yet done — see `docs/plans/TODO.md`. Until then, treat ~3.3 A as the real
-ceiling on every channel, including `total`.
+stall. The wizard's `total` fit (previous section) is still just an
+extrapolation from tens-of-mA points, same as the branches — it doesn't
+change this ceiling. A shunt change for the total channel only (R4:
+10 mΩ → ~3 mΩ, raising its ceiling to ~11 A) is planned but not yet done —
+see `docs/plans/TODO.md`. Until then, treat ~3.3 A as the real ceiling on
+every channel, including `total`.
 
 ## Related docs
 

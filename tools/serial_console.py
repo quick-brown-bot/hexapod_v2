@@ -37,18 +37,32 @@ except ImportError:
     sys.exit(1)
 
 
+# USB VID of the RP2040's built-in CDC (Raspberry Pi Foundation) -- what a
+# XIAO RP2040 (LegBoard) enumerates as. Preferred when picking automatically
+# so unrelated ports (e.g. Windows' Bluetooth virtual COM ports) don't count
+# against the "exactly one port" auto-pick.
+RP2040_USB_VID = 0x2E8A
+
+
 def pick_port() -> str:
     ports = list(serial.tools.list_ports.comports())
     if not ports:
         print("No serial ports found.", file=sys.stderr)
         sys.exit(1)
-    if len(ports) == 1:
-        return ports[0].device
+
+    rp2040_ports = [p for p in ports if p.vid == RP2040_USB_VID]
+    candidates = rp2040_ports or ports
+
+    if len(candidates) == 1:
+        p = candidates[0]
+        print(f"Auto-detected port: {p.device} ({p.description})")
+        return p.device
+
     print("Available ports:")
-    for i, p in enumerate(ports):
+    for i, p in enumerate(candidates):
         print(f"  [{i}] {p.device}  {p.description}")
     idx = input("Select port: ").strip()
-    return ports[int(idx)].device
+    return candidates[int(idx)].device
 
 
 def reader_thread(ser: "serial.Serial") -> None:

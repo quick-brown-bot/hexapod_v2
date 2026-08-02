@@ -81,8 +81,12 @@ test/
 
 Builds clean; not yet validated on hardware. Known follow-ups:
 
-- Pin map and ADC channel mapping must be **verified against the LegBoard
-  schematic** before connecting servos.
+- ADC current-sense channel mapping was verified against real hardware and
+  the schematic 2026-08-02: the coxa/femur/tibia current-sense pins are
+  **not** wired in alphabetical order (`I_FEMUR_SENSE`→A1, `I_TIBIA_SENSE`→A2,
+  `I_COXA_SENSE`→A3) — `current.cpp`'s `kAdcPhysicalInput[]` now compensates.
+  See `config.h`'s current-sense comment and
+  `docs/architecture/HARDWARE_AND_MECHANICS.md`.
 - Status LED polarity (`STATUS_LED_ACTIVE_LOW` in `config.h`) is assumed
   common-anode (LOW = on) per the XIAO RP2040's published pinout; **verify on
   real hardware** — invert if the LED behaves backwards (on when calibrated).
@@ -94,8 +98,10 @@ Builds clean; not yet validated on hardware. Known follow-ups:
   `CURCAL?`, `CURCAL`) — see `tools/leg_configurator.py` /
   `docs/development/LEG_CALIBRATION.md` for the guided address + resistor-based
   calibration wizard that drives these commands directly over the leg's own
-  USB serial, or `tools/current_calibration/` for the automated bench
-  workflow using the calibration adapter board (`hardware/calboard/`).
+  USB serial, `tools/legboard_current_monitor.py` for a live in-place
+  readout of all 4 channels (handy for manual wiring/behavior checks), or
+  `tools/current_calibration/` for the automated bench workflow using the
+  calibration adapter board (`hardware/calboard/`).
 - Servo PWM calibration (angle range, neutral) still uses compile-time
   defaults (1000/1500/2000 µs); a full USB calibration tool for servo ranges
   is still planned.

@@ -6,6 +6,7 @@
 
 static const int s_pin[NUM_JOINTS] = { PIN_PWM_COXA, PIN_PWM_FEMUR, PIN_PWM_TIBIA };
 static servo_calib_t s_cal[NUM_JOINTS];
+static bool s_override[NUM_JOINTS];
 
 static inline float clampf(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
@@ -32,6 +33,7 @@ void servo_init(void)
         s_cal[j].pwm_max_us     = DEFAULT_PWM_MAX_US;
         s_cal[j].invert         = 1;
         s_cal[j].offset_deg     = 0.0f;
+        s_override[j] = false;
         configure_slice_for_pin(s_pin[j]);
         // Start at neutral.
         pwm_set_gpio_level(s_pin[j], (uint16_t)s_cal[j].pwm_neutral_us);
@@ -47,6 +49,7 @@ servo_calib_t *servo_get_calib(int joint)
 bool servo_write_angle(int joint, float angle_deg)
 {
     if (joint < 0 || joint >= NUM_JOINTS) return false;
+    if (s_override[joint]) return false; // raw-pulse override active; see servo_write_pulse_us()
     const servo_calib_t *c = &s_cal[joint];
 
     float a = (float)c->invert * (angle_deg + c->offset_deg);
@@ -62,4 +65,24 @@ bool servo_write_angle(int joint, float angle_deg)
 
     pwm_set_gpio_level(s_pin[joint], (uint16_t)pulse);
     return was_clamped;
+}
+
+bool servo_write_pulse_us(int joint, int32_t pulse_us)
+{
+    if (joint < 0 || joint >= NUM_JOINTS) return false;
+    const servo_calib_t *c = &s_cal[joint];
+
+    int32_t clamped = pulse_us;
+    if (clamped < c->pwm_min_us) clamped = c->pwm_min_us;
+    if (clamped > c->pwm_max_us) clamped = c->pwm_max_us;
+
+    s_override[joint] = true;
+    pwm_set_gpio_level(s_pin[joint], (uint16_t)clamped);
+    return clamped != pulse_us;
+}
+
+void servo_clear_override(int joint)
+{
+    if (joint < 0 || joint >= NUM_JOINTS) return;
+    s_override[joint] = false;
 }

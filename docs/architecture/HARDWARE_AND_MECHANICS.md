@@ -87,9 +87,17 @@ Firmware-relevant pin assignments (XIAO RP2040):
 | Femur PWM | P4 |
 | Tibia PWM | P2 |
 | Total current sense | A0 |
-| Coxa current sense | A1 |
-| Femur current sense | A2 |
-| Tibia current sense | A3 |
+| Femur current sense | A1 |
+| Tibia current sense | A2 |
+| Coxa current sense | A3 |
+
+**Verified against real hardware and corrected 2026-08-02** — this table
+previously listed the coxa/femur/tibia current-sense pins in alphabetical
+order (A1/A2/A3), which does not match `hardware/legboard/legboard_sch.py`'s
+actual net wiring (`I_FEMUR_SENSE`→A1, `I_TIBIA_SENSE`→A2, `I_COXA_SENSE`→A3).
+Firmware compensates for this in `firmware/leg/src/current.cpp`
+(`kAdcPhysicalInput[]`) rather than relying on ADC channel number matching
+joint identity — see that file's comment for the full mapping.
 
 ### MainPowerBoard
 

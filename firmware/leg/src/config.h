@@ -26,10 +26,22 @@ enum { JOINT_COXA = 0, JOINT_FEMUR = 1, JOINT_TIBIA = 2 };
 #define PIN_PWM_TIBIA  2  // GP2
 
 // Current sense (ADC). RP2040 ADC inputs: GP26=ADC0 .. GP29=ADC3.
-#define PIN_ISENSE_TOTAL  26  // A0 / ADC0
-#define PIN_ISENSE_COXA   27  // A1 / ADC1
-#define PIN_ISENSE_FEMUR  28  // A2 / ADC2
-#define PIN_ISENSE_TIBIA  29  // A3 / ADC3
+//
+// Physical wiring (hardware/legboard/legboard_sch.py) does NOT follow
+// coxa/femur/tibia pin order: I_TOTAL_SENSE->GP26, I_FEMUR_SENSE->GP27,
+// I_TIBIA_SENSE->GP28, I_COXA_SENSE->GP29 -- confirmed on real hardware
+// 2026-08-02 (calibrating "coxa" moved the "femur" reading, etc., a clean
+// one-position rotation). ADC_CH_* below is the stable LOGICAL channel
+// numbering used everywhere external (CURRAW?/CURCAL, tools/leg_configurator.py,
+// s_channel_name in calib.cpp) -- it intentionally keeps coxa=1/femur=2/
+// tibia=3 regardless of physical pin order. current.cpp's
+// kAdcPhysicalInput[] maps each logical channel to the RP2040 ADC input
+// number that must actually be selected; PIN_ISENSE_* below is only used to
+// enable the 4 GPIOs for ADC use (order doesn't matter for that part).
+#define PIN_ISENSE_TOTAL  26  // A0 / ADC0 -- I_TOTAL_SENSE
+#define PIN_ISENSE_FEMUR  27  // A1 / ADC1 -- I_FEMUR_SENSE
+#define PIN_ISENSE_TIBIA  28  // A2 / ADC2 -- I_TIBIA_SENSE
+#define PIN_ISENSE_COXA   29  // A3 / ADC3 -- I_COXA_SENSE
 #define ADC_CH_TOTAL  0
 #define ADC_CH_COXA   1
 #define ADC_CH_FEMUR  2

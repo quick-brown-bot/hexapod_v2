@@ -1,6 +1,8 @@
 #include "calib.h"
 #include "persist.h"
 #include "config.h"
+#include "servo.h"
+#include "current.h"
 
 #include <Arduino.h>
 #include <string.h>
@@ -12,6 +14,8 @@
 static char   s_line[CALIB_LINE_MAX];
 static size_t s_len = 0;
 
+static const char *s_channel_name[NUM_CURRENT_CHANNELS] = { "total", "coxa", "femur", "tibia" };
+
 static void print_help(void)
 {
     Serial.println(F("commands:"));
@@ -19,7 +23,85 @@ static void print_help(void)
     Serial.println(F("  ADDR?       -> ADDR=<n>"));
     Serial.println(F("  ADDR <1-6>  -> set & persist leg address"));
     Serial.println(F("  STATUS?     -> address + identity"));
+    Serial.println(F("  PWM <joint 0-2> <us>            -> raw pulse override (bring-up/calib)"));
+    Serial.println(F("  CURRAW?                          -> raw ADC counts+mV, all 4 channels"));
+    Serial.println(F("  CURCAL?                          -> current scale=/offset=, all 4 channels"));
+    Serial.println(F("  CURCAL <ch 0-3> <scale> <offset> -> set & persist channel current calibration"));
     Serial.println(F("  HELP"));
+}
+
+static void handle_curraw(void)
+{
+    current_raw_t raw;
+    current_get_raw(&raw);
+    for (int ch = 0; ch < NUM_CURRENT_CHANNELS; ++ch) {
+        Serial.print(F("CH"));
+        Serial.print(ch);
+        Serial.print(F(" "));
+        Serial.print(s_channel_name[ch]);
+        Serial.print(F(" counts="));
+        Serial.print(raw.raw_counts[ch]);
+        Serial.print(F(" mv="));
+        Serial.println(raw.raw_mv[ch], 2);
+    }
+}
+
+static void handle_curcal_query(void)
+{
+    for (int ch = 0; ch < NUM_CURRENT_CHANNELS; ++ch) {
+        current_calib_t c = persist_get_current_calib(ch);
+        Serial.print(F("CH"));
+        Serial.print(ch);
+        Serial.print(F(" "));
+        Serial.print(s_channel_name[ch]);
+        Serial.print(F(" scale="));
+        Serial.print(c.scale_ma_per_mv, 6);
+        Serial.print(F(" offset="));
+        Serial.println(c.offset_ma, 3);
+    }
+}
+
+// Parses "CURCAL <ch> <scale> <offset>"; args points just past "CURCAL ".
+static void handle_curcal_set(char *args)
+{
+    char *end;
+    long ch = strtol(args, &end, 10);
+    if (end == args) { Serial.println(F("ERR usage: CURCAL <ch 0-3> <scale> <offset>")); return; }
+    float scale = strtod(end, &end);
+    float offset = strtod(end, &end);
+
+    if (persist_set_current_calib((int)ch, scale, offset)) {
+        current_reload_calib();
+        Serial.print(F("OK CH"));
+        Serial.print(ch);
+        Serial.print(F(" scale="));
+        Serial.print(scale, 6);
+        Serial.print(F(" offset="));
+        Serial.println(offset, 3);
+    } else {
+        Serial.println(F("ERR channel out of range (0-3)"));
+    }
+}
+
+// Parses "PWM <joint> <us>"; args points just past "PWM ".
+static void handle_pwm(char *args)
+{
+    char *end;
+    long joint = strtol(args, &end, 10);
+    if (end == args) { Serial.println(F("ERR usage: PWM <joint 0-2> <us>")); return; }
+    long us = strtol(end, &end, 10);
+    if (end == args) { Serial.println(F("ERR usage: PWM <joint 0-2> <us>")); return; }
+
+    bool clamped = servo_write_pulse_us((int)joint, (int32_t)us);
+    if (joint < 0 || joint >= NUM_JOINTS) {
+        Serial.println(F("ERR joint out of range (0-2)"));
+        return;
+    }
+    Serial.print(F("OK PWM joint="));
+    Serial.print(joint);
+    Serial.print(F(" us="));
+    Serial.print(us);
+    Serial.println(clamped ? F(" (clamped)") : F(""));
 }
 
 static void handle_line(char *line)
@@ -45,6 +127,14 @@ static void handle_line(char *line)
     } else if (strcmp(line, "STATUS?") == 0) {
         Serial.print(F("fw=" FW_IDENT " addr="));
         Serial.println(persist_get_address());
+    } else if (strcmp(line, "CURRAW?") == 0) {
+        handle_curraw();
+    } else if (strcmp(line, "CURCAL?") == 0) {
+        handle_curcal_query();
+    } else if (strncmp(line, "CURCAL ", 7) == 0) {
+        handle_curcal_set(line + 7);
+    } else if (strncmp(line, "PWM ", 4) == 0) {
+        handle_pwm(line + 4);
     } else if (line[0] != '\0') {
         Serial.println(F("ERR unknown command (try HELP)"));
     }
