@@ -5,8 +5,9 @@
 //   - identity: the leg address (1..6), or 0 if never calibrated. Must
 //     differ between otherwise-identical boards and survive reboot. Written
 //     once during pre-mount calibration over USB (ADDR <1-6>).
-//   - calib: per-channel current-sense scale/offset. Board-specific, set
-//     once via the calibration bench (tools/current_calibration) or
+//   - calib: per-channel current-sense scale/offset, plus the current
+//     smoothing strategy (CURFILT, filter mode + boxcar N). Board-specific,
+//     set once via the calibration bench (tools/current_calibration) or
 //     tools/leg_configurator.py over the leg's own USB serial.
 // Each partition has its own magic/version so resetting one does not affect
 // the other. Runtime parameters (MOVE_DURATION, etc.) are NOT persisted —
@@ -47,6 +48,14 @@ current_calib_t persist_get_current_calib(int channel);
 // Set and persist the calibration for one current channel. Returns false for
 // an out-of-range channel.
 bool persist_set_current_calib(int channel, float scale_ma_per_mv, float offset_ma);
+
+// Current-smoothing strategy (CURRENT_FILTER_EMA/CURRENT_FILTER_BOXCAR,
+// config.h), EMA alpha, and boxcar window N. Persisted so CURFILT survives
+// reboot.
+int   persist_get_current_filter_mode(void);
+float persist_get_current_ema_alpha(void);
+int   persist_get_current_boxcar_n(void);
+bool  persist_set_current_filter(int mode, float ema_alpha, int boxcar_n);
 
 #ifdef __cplusplus
 }

@@ -97,6 +97,34 @@ enum { JOINT_COXA = 0, JOINT_FEMUR = 1, JOINT_TIBIA = 2 };
 #define DEFAULT_ISENSE_OFFSET_MA   0.0f
 #define NUM_CURRENT_CHANNELS 4  // total, coxa, femur, tibia (ADC_CH_* order)
 
+// Smoothing for the *reported* (calibrated) current -- current_sample()
+// runs at CONTROL_RATE_HZ (1 kHz) but the ESP32 only pulls each leg roughly
+// every 10 ms (100 Hz, docs/interfaces/RS485_PROTOCOL.md "Timing Budget"),
+// so without this the telemetry value would just be whichever single 1 kHz
+// sample happened to land at poll time. Two selectable strategies (set over
+// USB, see calib.cpp CURFILT -- current.h current_set_filter_mode()/
+// current_set_boxcar_n()), because per-servo current spikes are also the
+// intended touchdown-detection signal (docs/architecture/HARDWARE_AND_MECHANICS.md)
+// and heavier averaging blunts/delays them:
+//   EMA (default) -- alpha=0.4 gives a ~2-sample (~2 ms) time constant at
+//     1 kHz: real noise reduction while still surfacing most of a spike
+//     within a couple of samples, well inside one 10 ms poll interval.
+//     alpha is tunable (0 < alpha <= 1): lower = more smoothing/latency,
+//     1.0 = unfiltered (equivalent to reporting the raw 1 kHz sample).
+//   BOXCAR -- a flat N-sample moving average (default N=10, i.e. the ~10 ms
+//     poll interval). Trades more latency for stronger, uniform noise
+//     reduction: a touchdown spike may only become clearly visible about
+//     one window late (e.g. ~20 ms at N=10 instead of ~10 ms).
+// CURRAW?'s raw mV/counts (calib.cpp) are never filtered -- calibration
+// wants the true instantaneous ADC reading. Both the mode and its
+// parameter (alpha or N) are persisted -- see persist_get/set_current_filter().
+#define CURRENT_FILTER_EMA     0
+#define CURRENT_FILTER_BOXCAR  1
+#define DEFAULT_CURRENT_FILTER_MODE  CURRENT_FILTER_EMA
+#define DEFAULT_CURRENT_EMA_ALPHA 0.4f
+#define CURRENT_BOXCAR_MAX_N   32  // upper bound on the ring-buffer window
+#define DEFAULT_CURRENT_BOXCAR_N 10
+
 // --- Flash persistence -----------------------------------------------------
 // Two independent EEPROM.h partitions (see persist.cpp): a tiny "identity"
 // partition (leg address) and a tiny "calib" partition (current-sense
@@ -110,7 +138,7 @@ enum { JOINT_COXA = 0, JOINT_FEMUR = 1, JOINT_TIBIA = 2 };
 #define PERSIST_IDENTITY_MAGIC    0x4C454944UL  // "LEID" (distinct from old "LEG1")
 #define PERSIST_IDENTITY_VERSION  1
 #define PERSIST_CALIB_MAGIC       0x43414C31UL  // "CAL1"
-#define PERSIST_CALIB_VERSION     1
+#define PERSIST_CALIB_VERSION     3  // v3: added current-filter EMA alpha
 
 // 0 is not a valid RS485 address (the protocol uses 1-6) and marks an
 // unassigned/uncalibrated board. It is only ever set by ADDR <1-6> during

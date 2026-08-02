@@ -21,6 +21,9 @@ typedef struct {
     uint16_t version;
     uint16_t pad;
     current_calib_t current_calib[NUM_CURRENT_CHANNELS];
+    int32_t  filter_mode;  // CURRENT_FILTER_EMA / CURRENT_FILTER_BOXCAR
+    float    ema_alpha;
+    int32_t  boxcar_n;
 } persist_calib_t;
 
 #define EEPROM_SIZE            256
@@ -64,6 +67,9 @@ void persist_init(void)
             s_calib.current_calib[i].scale_ma_per_mv = DEFAULT_ISENSE_MA_PER_MV;
             s_calib.current_calib[i].offset_ma = DEFAULT_ISENSE_OFFSET_MA;
         }
+        s_calib.filter_mode = DEFAULT_CURRENT_FILTER_MODE;
+        s_calib.ema_alpha = DEFAULT_CURRENT_EMA_ALPHA;
+        s_calib.boxcar_n = DEFAULT_CURRENT_BOXCAR_N;
         write_calib();
     }
 }
@@ -95,6 +101,30 @@ bool persist_set_current_calib(int channel, float scale_ma_per_mv, float offset_
     if (channel < 0 || channel >= NUM_CURRENT_CHANNELS) return false;
     s_calib.current_calib[channel].scale_ma_per_mv = scale_ma_per_mv;
     s_calib.current_calib[channel].offset_ma = offset_ma;
+    write_calib();
+    return true;
+}
+
+int persist_get_current_filter_mode(void)
+{
+    return (int)s_calib.filter_mode;
+}
+
+float persist_get_current_ema_alpha(void)
+{
+    return s_calib.ema_alpha;
+}
+
+int persist_get_current_boxcar_n(void)
+{
+    return (int)s_calib.boxcar_n;
+}
+
+bool persist_set_current_filter(int mode, float ema_alpha, int boxcar_n)
+{
+    s_calib.filter_mode = mode;
+    s_calib.ema_alpha = ema_alpha;
+    s_calib.boxcar_n = boxcar_n;
     write_calib();
     return true;
 }

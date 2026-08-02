@@ -27,6 +27,9 @@ static void print_help(void)
     Serial.println(F("  CURRAW?                          -> raw ADC counts+mV, all 4 channels"));
     Serial.println(F("  CURCAL?                          -> current scale=/offset=, all 4 channels"));
     Serial.println(F("  CURCAL <ch 0-3> <scale> <offset> -> set & persist channel current calibration"));
+    Serial.println(F("  CURFILT?                         -> current smoothing mode + params (persisted)"));
+    Serial.println(F("  CURFILT EMA [alpha 0-1]          -> switch to/tune EMA smoothing (default)"));
+    Serial.println(F("  CURFILT BOXCAR <n 1-32>          -> switch to N-sample moving average"));
     Serial.println(F("  HELP"));
 }
 
@@ -83,6 +86,49 @@ static void handle_curcal_set(char *args)
     }
 }
 
+static void handle_curfilt_query(void)
+{
+    if (current_get_filter_mode() == CURRENT_FILTER_BOXCAR) {
+        Serial.print(F("CURFILT=BOXCAR N="));
+        Serial.println(current_get_boxcar_n());
+    } else {
+        Serial.print(F("CURFILT=EMA ALPHA="));
+        Serial.println(current_get_ema_alpha(), 4);
+    }
+}
+
+// Parses "EMA [alpha]" or "BOXCAR <n>"; args points just past "CURFILT ".
+static void handle_curfilt_set(char *args)
+{
+    if (strncmp(args, "EMA", 3) == 0) {
+        current_set_filter_mode(CURRENT_FILTER_EMA);
+        char *rest = args + 3;
+        while (*rest == ' ') ++rest;
+        if (*rest != '\0') {
+            char *end;
+            float alpha = strtod(rest, &end);
+            if (end != rest) current_set_ema_alpha(alpha);
+        }
+        Serial.print(F("OK CURFILT=EMA ALPHA="));
+        Serial.println(current_get_ema_alpha(), 4);
+        return;
+    }
+    if (strncmp(args, "BOXCAR", 6) == 0) {
+        char *end;
+        long n = strtol(args + 6, &end, 10);
+        if (end == args + 6) {
+            Serial.println(F("ERR usage: CURFILT BOXCAR <n 1-32>"));
+            return;
+        }
+        current_set_filter_mode(CURRENT_FILTER_BOXCAR);
+        current_set_boxcar_n((int)n);
+        Serial.print(F("OK CURFILT=BOXCAR N="));
+        Serial.println(current_get_boxcar_n());
+        return;
+    }
+    Serial.println(F("ERR usage: CURFILT EMA [alpha 0-1] | CURFILT BOXCAR <n 1-32>"));
+}
+
 // Parses "PWM <joint> <us>"; args points just past "PWM ".
 static void handle_pwm(char *args)
 {
@@ -133,6 +179,10 @@ static void handle_line(char *line)
         handle_curcal_query();
     } else if (strncmp(line, "CURCAL ", 7) == 0) {
         handle_curcal_set(line + 7);
+    } else if (strcmp(line, "CURFILT?") == 0) {
+        handle_curfilt_query();
+    } else if (strncmp(line, "CURFILT ", 8) == 0) {
+        handle_curfilt_set(line + 8);
     } else if (strncmp(line, "PWM ", 4) == 0) {
         handle_pwm(line + 4);
     } else if (line[0] != '\0') {

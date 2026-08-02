@@ -76,6 +76,29 @@ test/
   run over USB, no reboot required.
 - **Interpolation.** LINEAR is the default (easy to verify during bring-up);
   cubic Hermite is enabled via the `INTERP_MODE` parameter.
+- **Current smoothing.** `current_sample()` runs at 1 kHz but the ESP32 only
+  pulls each leg ~every 10 ms (100 Hz); without smoothing, RS485 telemetry
+  would report whichever single 1 kHz sample happened to land at poll time.
+  `current.cpp` smooths the *calibrated* current only (`CURRAW?`'s raw
+  mV/counts always stay unfiltered, for calibration) with a runtime-selectable
+  strategy, since per-servo current spikes are also the intended
+  touchdown-detection signal (`docs/architecture/HARDWARE_AND_MECHANICS.md`)
+  and heavier averaging blunts/delays them:
+  - `CURFILT EMA [alpha 0-1]` (default) — exponential moving average,
+    `DEFAULT_CURRENT_EMA_ALPHA` in config.h (0.4, ~2 ms time constant).
+    Tunable at runtime; lower alpha = more smoothing/latency, 1.0 =
+    unfiltered.
+  - `CURFILT BOXCAR <n 1-32>` — flat N-sample moving average
+    (`CURRENT_BOXCAR_MAX_N`/`DEFAULT_CURRENT_BOXCAR_N`, default N=10). Much
+    stronger, uniform noise reduction, at the cost of a touchdown spike
+    potentially only becoming clearly visible about one window late (e.g.
+    ~20 ms at N=10 instead of ~10 ms).
+
+  Persisted in the `calib` EEPROM partition (unlike MOVE_DURATION/
+  WATCHDOG_TIMEOUT/INTERP_MODE — this is a board-level current-sensing
+  setting, not something the ESP32 re-applies) — survives reboot, set over
+  USB (`CURFILT?`/`CURFILT`). Switching mode or N persists the change and
+  resets the filter state.
 
 ## Bring-Up Status / TODO
 
