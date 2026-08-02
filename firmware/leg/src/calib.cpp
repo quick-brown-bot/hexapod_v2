@@ -3,6 +3,7 @@
 #include "config.h"
 #include "servo.h"
 #include "current.h"
+#include "loopstat.h"
 
 #include <Arduino.h>
 #include <string.h>
@@ -30,7 +31,16 @@ static void print_help(void)
     Serial.println(F("  CURFILT?                         -> current smoothing mode + params (persisted)"));
     Serial.println(F("  CURFILT EMA [alpha 0-1]          -> switch to/tune EMA smoothing (default)"));
     Serial.println(F("  CURFILT BOXCAR <n 1-32>          -> switch to N-sample moving average"));
+    Serial.println(F("  LOOPSTAT?                        -> measured loop()/control-step Hz (1s window)"));
     Serial.println(F("  HELP"));
+}
+
+static void handle_loopstat(void)
+{
+    Serial.print(F("loop_hz="));
+    Serial.print(loopstat_get_loop_hz());
+    Serial.print(F(" control_hz="));
+    Serial.println(loopstat_get_control_hz());
 }
 
 static void handle_curraw(void)
@@ -183,6 +193,8 @@ static void handle_line(char *line)
         handle_curfilt_query();
     } else if (strncmp(line, "CURFILT ", 8) == 0) {
         handle_curfilt_set(line + 8);
+    } else if (strcmp(line, "LOOPSTAT?") == 0) {
+        handle_loopstat();
     } else if (strncmp(line, "PWM ", 4) == 0) {
         handle_pwm(line + 4);
     } else if (line[0] != '\0') {

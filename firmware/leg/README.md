@@ -42,6 +42,7 @@ src/
   persist.h/.cpp Flash-backed leg address + current calibration (arduino-pico EEPROM,
                  two independent partitions)
   status_led.h/.cpp  Onboard LED: blinks red 2 Hz while uncalibrated, off once calibrated
+  loopstat.h/.cpp    Measures the actual achieved loop()/control-step Hz (LOOPSTAT?)
   calib.h/.cpp   Minimal USB-serial bring-up interface (set leg address)
   main.cpp       Wiring: RS485 request/response + fixed-rate control loop
 test/

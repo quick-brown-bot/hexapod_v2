@@ -57,26 +57,54 @@ hand-drawn approximation of the rendered board
 see `docs/plans/TODO.md` for auto-generating it from the real board render
 as a possible follow-up.
 
-## 3. Current-sense calibration (coxa / femur / tibia)
+## 3. Zero-load offsets (all 4 channels at once)
 
-For each channel in turn, the wizard walks through a **zero point first,
-then a spread of known resistor loads**, and fits a line through all of them
-by least squares (not just two points), calling out the exact connector
-(e.g. "J2 (coxa)") at each step:
+The wizard asks you to disconnect all three servos, then takes one averaged
+`CURRAW?` reading (5 samples) that covers **total/coxa/femur/tibia in a
+single step** — one poll already reports all 4 channels, so there's no
+separate "now disconnect for total" pass. Whatever raw mV each channel
+reports at zero load *is* that channel's offset error (true current is 0
+there by definition).
 
-1. **Zero point.** Disconnect the servo from this channel (open circuit — no
-   load) and confirm. Measures the raw ADC millivolt value via `CURRAW?`,
-   averaged over 5 individual readings. Done first, before any resistors, so
-   it both anchors the fit at the one reference current we know exactly
-   (0 mA) and immediately catches a disconnected/miswired channel before you
-   spend time on resistor points.
-2. **Span points.** Attach each of four suggested THT resistor values in
-   turn — **470 Ω, 220 Ω, 100 Ω, 47 Ω** (common E12 values, low-to-high
-   current). No confirmation keypress needed for the attach step itself: the
-   wizard live-updates the raw reading on one line and auto-detects once it
-   has moved away from the zero-point baseline and settled (on Windows, you
-   can also just press Enter to force a manual reading, e.g. if the change
-   is too small to trip the threshold). Once settled, it takes the recorded
+Offset matters far more than scale for this hardware: the INA4181 gain +
+shunt put scale theoretically at 1.0, and it lands around 0.97-0.99 in
+practice — a small correction — while the offset can meaningfully skew
+low-current readings if left uncorrected. So this single step alone is
+already a reasonable calibration.
+
+## 4. Choose how far to take it
+
+After the offsets are measured, the wizard asks:
+
+```
+More precise calibration with resistors? [y/N], or enter a scale (0-2)
+to use for every channel together with the offsets above:
+```
+
+- **Enter / `n` (default)** — write `scale=1.0` with the just-measured
+  offset to all 4 channels and stop. Fastest path, good enough for most
+  boards.
+- **A number 0-2** — use that as the scale for all 4 channels (still paired
+  with each channel's own measured offset). Handy if you already know this
+  batch of boards runs close to e.g. 0.98 and want to skip the resistor
+  dance entirely.
+- **`y`** — go on to full per-channel resistor calibration (below), reusing
+  the zero point already measured instead of re-measuring it per channel.
+
+## 5. Resistor calibration (optional, `y` above)
+
+For each of coxa/femur/tibia in turn, the wizard attaches a spread of known
+resistor loads and fits a line through the (already-measured) zero point
+plus all of them by least squares, calling out the exact connector (e.g.
+"J2 (coxa)") at each step:
+
+1. Attach each of four suggested THT resistor values in turn — **470 Ω,
+   220 Ω, 100 Ω, 47 Ω** (common E12 values, low-to-high current). No
+   confirmation keypress needed for the attach step itself: the wizard
+   live-updates the raw reading on one line and auto-detects once it has
+   moved away from the zero-point baseline and settled (on Windows, you can
+   also just press Enter to force a manual reading, e.g. if the change is
+   too small to trip the threshold). Once settled, it takes the recorded
    value as an average of 5 fresh individual readings — not just whichever
    single noisy poll happened to trip the detector. It then asks for the
    reference current (mA), defaulting to whatever you entered for that
@@ -84,26 +112,27 @@ by least squares (not just two points), calling out the exact connector
    guess on the very first run. The wizard prints the minimum power rating
    needed per value (table below) — these are deliberately small, low-power
    loads; you do **not** need to source amps through a resistor.
-3. The wizard fits `current_ma = scale × raw_mv + offset` by ordinary least
-   squares over all 5 points (1 zero + 4 span) and persists it with
+2. The wizard fits `current_ma = scale × raw_mv + offset` by ordinary least
+   squares over the zero point + all 4 span points and persists it with
    `CURCAL <ch> <scale> <offset>` — the same command `calib.cpp` already
    exposes for manual/bench calibration.
-4. **`total` is calibrated too, for free.** `CURRAW?` reports all 4
-   channels on every poll, so every coxa/femur/tibia zero/span measurement
-   above doubles as a `total` (channel 0) data point at no extra cost — no
-   separate steps, no extra resistor attachments. After all selected
-   branches are done, the wizard fits and persists `total` from whatever
-   points got collected along the way. **This is only valid if the other
-   two branches stay disconnected for the entire session**, not just their
-   own step — the wizard prints a reminder before starting. If you only ran
-   a subset of channels (`--channels`), `total`'s fit is based on just
-   those branches' points.
+3. **`total` is calibrated too, for free.** `CURRAW?` reports all 4
+   channels on every poll, so every coxa/femur/tibia span measurement above
+   doubles as a `total` (channel 0) data point at no extra cost — no
+   separate steps, no extra resistor attachments. The zero point from step 3
+   is included too. After all selected branches are done, the wizard fits
+   and persists `total` from whatever points got collected along the way.
+   **This is only valid if the other two branches stay disconnected for the
+   entire session**, not just their own step — the wizard prints a reminder
+   before starting. If you only ran a subset of channels (`--channels`),
+   `total`'s fit is based on just those branches' points.
 
 **Redo a step, or just re-measure.** Made a mistake — wrong resistor,
 mis-typed current, bumped a lead? At any reference-current prompt (or as a
 bare keypress while a reading is live, on Windows):
-- `b` discards the current step and redoes the *previous* one. Going back
-  from the first resistor step redoes the zero point too.
+- `b` discards the current step and redoes the *previous* one (as far back
+  as the first resistor step — the zero point was already measured in step 3
+  and isn't redone here).
 - `r` re-measures the *current* step in place (same resistor, fresh
   reading) without losing your spot in the sequence.
 

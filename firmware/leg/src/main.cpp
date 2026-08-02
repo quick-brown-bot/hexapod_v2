@@ -21,6 +21,7 @@
 #include "persist.h"
 #include "calib.h"
 #include "status_led.h"
+#include "loopstat.h"
 
 // --- Runtime state -------------------------------------------------------
 static uint8_t  s_addr = DEFAULT_LEG_ADDR;
@@ -111,6 +112,7 @@ void setup()
     persist_init();
     s_addr = persist_get_address();
     status_led_init();
+    loopstat_init();
 
     rs485_init();
     servo_init();
@@ -124,6 +126,8 @@ void setup()
 
 void loop()
 {
+    loopstat_tick_loop();
+
     // Re-read every loop (cheap RAM read, not a flash access) so a fresh
     // ADDR over USB takes effect immediately -- including turning the status
     // LED off -- without requiring a reboot.
@@ -150,6 +154,7 @@ void loop()
     uint32_t now = micros();
     if ((uint32_t)(now - s_last_control_us) >= CONTROL_PERIOD_US) {
         s_last_control_us = now;
+        loopstat_tick_control();
 
         if ((uint32_t)(now - s_last_rx_us) > (uint32_t)s_watchdog_timeout_ms * 1000U) {
             if (!s_watchdog_active) {

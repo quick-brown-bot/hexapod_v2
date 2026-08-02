@@ -54,6 +54,15 @@ enum { JOINT_COXA = 0, JOINT_FEMUR = 1, JOINT_TIBIA = 2 };
 // --- Control loop --------------------------------------------------------
 // Internal interpolation / servo update rate (independent of the RS485 rate).
 // HARDWARE_AND_MECHANICS.md specifies 500-1000 Hz.
+//
+// This is a software poll against micros() in main.cpp's loop() (no hardware
+// timer/interrupt), so the achieved rate isn't guaranteed by construction --
+// measure it with LOOPSTAT? (loopstat.h/.cpp) if in doubt. Measured on real
+// hardware 2026-08-03: 1000 -> 998 Hz and 2000 -> ~1995 Hz, both with huge
+// headroom (loop_hz ~178-195k); 10000 -> ~9790 Hz, a real ~2% shortfall,
+// because the control step body itself costs ~82us and starts eating into
+// the 100us window. Ceiling is somewhere between 2 kHz and 10 kHz -- 1 kHz
+// and 2 kHz are both essentially free.
 #define CONTROL_RATE_HZ   1000U
 #define CONTROL_PERIOD_US (1000000U / CONTROL_RATE_HZ)
 

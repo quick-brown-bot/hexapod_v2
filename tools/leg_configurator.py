@@ -9,32 +9,42 @@ Wizard flow:
      over `ADDR`.
   2. Prints an ASCII top-view of the board so you know which connector is
      which before touching anything.
-  3. Current-sense calibration for each of coxa/femur/tibia in turn:
-     a. Zero point: disconnect the servo (open circuit -- no load), measure
-        the raw ADC millivolt reading (CURRAW?, averaged over
-        FINAL_SAMPLE_COUNT samples).
-     b. Span points: attach each of a few known THT resistor loads in turn.
-        The reading is shown live (updated in place) and the load is
-        auto-detected once it deviates from the zero-point baseline and
-        settles -- no confirmation keypress needed for that part. Once
-        settled, the recorded value is an average of FINAL_SAMPLE_COUNT
-        fresh individual readings, not just whichever single poll tripped
-        the detector. Enter the reference current (mA) for each; the prompt
-        defaults to whatever you typed for that resistor value last time (or
-        a first-run theoretical guess), so repeat runs are mostly
-        Enter-Enter-Enter. At any point: 'b' redoes the previous reading
-        step, 'r' re-measures the current one (both also work as a bare
-        keypress while a reading is live, on Windows).
-     c. Fit `current_ma = scale * raw_mv + offset` by ordinary least squares
-        over all points (1 zero + N span), then persist it with
-        `CURCAL <ch> <scale> <offset>`.
-  4. `total` (channel 0) is then fit from points piggybacked for free during
-     the branch calibrations above -- CURRAW? already reports all 4 channels
-     on every poll, so every zero/span measurement doubles as a `total` data
-     point (paired with the same reference current), no extra round trips.
-     Valid only if the other two branches stay disconnected for the *whole*
-     session, not just their own step -- the wizard prints a reminder before
-     starting.
+  3. Zero-load offsets, all 4 channels at once: disconnect all three servos
+     and one CURRAW? poll (averaged over FINAL_SAMPLE_COUNT samples) reports
+     every channel's offset error in one step -- no separate "disconnect for
+     total" pass, since a single poll already covers total/coxa/femur/tibia.
+     Offset matters far more than scale here (the INA4181 gain + shunt put
+     scale theoretically near 1.0, and it lands ~0.97-0.99 in practice), so
+     this alone is enough for a reasonable calibration.
+  4. Choose how far to take it:
+     - Enter/'n' (default): write scale=1.0 with the just-measured offset to
+       all 4 channels and stop there.
+     - a number 0-2: use that as the scale for all 4 channels (still with
+       their own measured offsets) -- e.g. if you already know this batch of
+       boards runs close to 0.98, skip the resistor dance entirely.
+     - 'y': go on to full per-channel resistor calibration (below), reusing
+       the zero point already measured instead of re-measuring it.
+  5. Resistor calibration (only if 'y' above), for each of coxa/femur/tibia
+     in turn: attach each of a few known THT resistor loads. The reading is
+     shown live (updated in place) and the load is auto-detected once it
+     deviates from the zero-point baseline and settles -- no confirmation
+     keypress needed for that part. Once settled, the recorded value is an
+     average of FINAL_SAMPLE_COUNT fresh individual readings, not just
+     whichever single poll tripped the detector. Enter the reference current
+     (mA) for each; the prompt defaults to whatever you typed for that
+     resistor value last time (or a first-run theoretical guess), so repeat
+     runs are mostly Enter-Enter-Enter. At any point: 'b' redoes the
+     previous reading step, 'r' re-measures the current one (both also work
+     as a bare keypress while a reading is live, on Windows). Fits
+     `current_ma = scale * raw_mv + offset` by ordinary least squares over
+     the zero point + all span points, then persists it with
+     `CURCAL <ch> <scale> <offset>`. `total` (channel 0) is then fit from
+     points piggybacked for free during these branch calibrations -- CURRAW?
+     already reports all 4 channels on every poll, so every span measurement
+     doubles as a `total` data point (paired with the same reference
+     current), no extra round trips. Valid only if the other two branches
+     stay disconnected for the *whole* session, not just their own step --
+     the wizard prints a reminder before starting.
 
 The suggested resistor values stay in the tens-of-mA range on purpose -- the
 INA4181 current-shunt amplifier is linear by design, so a handful of
@@ -81,6 +91,7 @@ RP2040_USB_VID = 0x2E8A
 
 # calib.cpp channel indices (ADC_CH_TOTAL/COXA/FEMUR/TIBIA order).
 CHANNELS = {"coxa": 1, "femur": 2, "tibia": 3}
+ALL_CHANNEL_NAMES = {0: "total", 1: "coxa", 2: "femur", 3: "tibia"}
 # Servo connector per channel, from hardware/legboard/legboard_sch.py
 # (J2/COXA_PWM, J3/FEMUR_PWM, J4/TIBIA_PWM) -- see the board diagram below.
 CONNECTOR = {"coxa": "J2", "femur": "J3", "tibia": "J4"}
@@ -113,8 +124,8 @@ LOAD_DETECT_TIMEOUT_S = 90.0
 # actual recorded measurement is the average of this many fresh individual
 # samples (rather than just whatever single noisy poll happened to trip the
 # detector) -- same idea for the zero point.
-FINAL_SAMPLE_COUNT = 5
-FINAL_SAMPLE_INTERVAL_S = 0.1
+FINAL_SAMPLE_COUNT = 20
+FINAL_SAMPLE_INTERVAL_S = 0.05
 
 # Hand-drawn from hardware/legboard/legboard_sch.py placement + the rendered
 # board (hardware/legboard/board-front.png) -- component-side top view, not
@@ -433,34 +444,79 @@ def prompt_leg_address(link: LegLink) -> int:
 TOTAL_CH = 0
 
 
+def measure_all_offsets(link: LegLink) -> dict:
+    """The one, shared zero-load measurement: with nothing connected to any
+    of the three servo channels, current_ma should read 0 everywhere, so
+    whatever raw mV each channel reports *is* that channel's offset error.
+    One CURRAW? poll already reports all 4 channels, so this covers total
+    too in the same step -- no separate "disconnect for total" pass needed.
+    """
+    wait_enter("Disconnect all three servos (coxa/femur/tibia -- open circuit, no load), then press Enter.")
+    avg = sample_averaged(link, TOTAL_CH)
+    print("Zero-load raw readings (this channel's offset error):")
+    for ch, name in ALL_CHANNEL_NAMES.items():
+        print(f"  CH{ch} {name}: {avg.get(ch, 0.0):.3f} mV")
+    return avg
+
+
+def prompt_calibration_mode():
+    """Returns ("offsets", 1.0), ("scale", <0-2>), or ("resistors", None)."""
+    s = input(
+        "\nMore precise calibration with resistors? [y/N], or enter a scale "
+        "(0-2) to use for every channel together with the offsets above: "
+    ).strip()
+    if s == "" or s.lower() in ("n", "no"):
+        return "offsets", 1.0
+    if s.lower() in ("y", "yes"):
+        return "resistors", None
+    try:
+        val = float(s)
+    except ValueError:
+        print("Not understood -- defaulting to offsets-only (scale=1.0).")
+        return "offsets", 1.0
+    if 0.0 <= val <= 2.0:
+        return "scale", val
+    print("Scale out of range (0-2) -- defaulting to offsets-only (scale=1.0).")
+    return "offsets", 1.0
+
+
+def push_offset_only(link: LegLink, ch: int, scale: float, zero_mv: float) -> None:
+    """Persist `scale` with whatever offset makes this channel read exactly
+    0 mA at the already-measured zero-load raw reading:
+    0 = zero_mv * scale + offset  =>  offset = -scale * zero_mv."""
+    offset = -scale * zero_mv
+    resp = link.command(f"CURCAL {ch} {scale:.6f} {offset:.3f}", expect_lines=1)
+    if resp and resp[0].startswith("OK"):
+        print(f"OK CH{ch} {ALL_CHANNEL_NAMES[ch]}: {resp[0]}")
+    else:
+        print(f"ERR CH{ch} {ALL_CHANNEL_NAMES[ch]}: unexpected response {resp}")
+
+
 def calibrate_channel(link: LegLink, name: str, ch: int, ref_cache: dict,
-                       total_raw: list, total_ref: list) -> None:
-    """Calibrate one branch channel. Also appends this channel's raw `total`
-    (channel 0) reading at every zero/span point to `total_raw`/`total_ref`
-    (paired with the same reference current) -- CURRAW? already reports all
-    4 channels per poll, so this piggybacks a free calibration data set for
-    `total` onto the branch measurements at no extra cost. Valid only if the
-    other two branches stay disconnected for the whole session, not just
-    their own step (see the note printed in main())."""
+                       total_raw: list, total_ref: list, zero_mv: dict) -> None:
+    """Resistor-span calibration for one branch channel, starting from the
+    zero point already measured by measure_all_offsets() (`zero_mv`) --
+    no separate per-channel disconnect/re-measure. Also appends this
+    channel's raw `total` (channel 0) reading at every span point to
+    `total_raw`/`total_ref` (paired with the same reference current) --
+    CURRAW? already reports all 4 channels per poll, so this piggybacks a
+    free calibration data set for `total` onto the branch measurements at no
+    extra cost. Valid only if the other two branches stay disconnected for
+    the whole session, not just their own step (see the note printed in
+    main())."""
     connector = CONNECTOR[name]
     print(f"\n--- {name} current calibration (channel {ch}, connector {connector}) ---")
+    print(f"  using pre-measured zero-load raw = {zero_mv[ch]:.3f} mV")
     print("(At any prompt: 'b' redoes the previous step, 'r' re-measures this one.)")
 
-    # Step 0 is the zero point; steps 1..len(SPAN_OHMS) are the resistor
-    # loads. Index-driven (not a for loop) so `back`/`redo` can rewind it.
+    # points[0] is the shared zero point (already measured); steps 1..len(SPAN_OHMS)
+    # are the resistor loads. Index-driven (not a for loop) so `back`/`redo` can
+    # rewind it; 1 is as far back as it goes (no per-channel zero to redo here).
     n_steps = 1 + len(SPAN_OHMS)
     points = [None] * n_steps  # (raw_mv, ref_ma), filled in as we go
-    i = 0
+    points[0] = (zero_mv[ch], 0.0)
+    i = 1
     while i < n_steps:
-        if i == 0:
-            wait_enter(f"Disconnect the servo from {connector} ({name}, open circuit, no load), then press Enter.")
-            avg = sample_averaged(link, ch)
-            points[0] = (avg[ch], 0.0)
-            total_raw.append(avg[TOTAL_CH])
-            total_ref.append(0.0)
-            i += 1
-            continue
-
         ohms = SPAN_OHMS[i - 1]
         power = SPAN_POWER[i - 1]
         baseline = points[0][0]
@@ -468,13 +524,13 @@ def calibrate_channel(link: LegLink, name: str, ch: int, ref_cache: dict,
         prompt = f"Attach a {ohms} ohm resistor (rated >= {power}) to {connector} ({name})."
         avg = wait_for_load_change(link, ch, baseline, prompt)
         if avg is BACK:
-            i = max(0, i - 1)
+            i = max(1, i - 1)
             continue
 
         default = default_ref_current_ma(ref_cache, ohms)
         i_ref = read_float_default("Enter the measured/computed reference current for this load, in mA", default)
         if i_ref is BACK:
-            i = max(0, i - 1)
+            i = max(1, i - 1)
             continue
         if i_ref is REDO:
             continue  # same step: re-measure the raw reading, keep the index
@@ -564,14 +620,26 @@ def main() -> None:
         run_zero_position(link)
         return
 
+    print()
+    zero_mv = measure_all_offsets(link)
+
+    mode, scale = prompt_calibration_mode()
+
+    if mode != "resistors":
+        print(f"\nWriting scale={scale:.6f} with the measured offsets to all 4 channels...")
+        for ch in ALL_CHANNEL_NAMES:
+            push_offset_only(link, ch, scale, zero_mv.get(ch, 0.0))
+        print("\nDone.")
+        return
+
     print("\nTip: for a bonus 'total' channel calibration piggybacked for free on the")
     print("branch measurements below, keep ALL THREE servos disconnected for this whole")
     print("session -- not just whichever one is being tested at the moment.")
 
     ref_cache = load_ref_current_cache()
-    total_raw, total_ref = [], []
+    total_raw, total_ref = [zero_mv.get(TOTAL_CH, 0.0)], [0.0]
     for n in names:
-        calibrate_channel(link, n, CHANNELS[n], ref_cache, total_raw, total_ref)
+        calibrate_channel(link, n, CHANNELS[n], ref_cache, total_raw, total_ref, zero_mv)
 
     if len(total_raw) >= 2:
         calibrate_total(link, total_raw, total_ref)
