@@ -39,6 +39,7 @@ Firmware: [`firmware/`](../firmware/leg/).
 ## Development
 
 - [development/README.md](development/README.md)
+- [development/LEG_CALIBRATION.md](development/LEG_CALIBRATION.md) — LegBoard address + current-sense calibration via `tools/leg_configurator.py`
 
 ---
 

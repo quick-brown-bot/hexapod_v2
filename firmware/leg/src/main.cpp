@@ -20,6 +20,7 @@
 #include "interp.h"
 #include "persist.h"
 #include "calib.h"
+#include "status_led.h"
 
 // --- Runtime state -------------------------------------------------------
 static uint8_t  s_addr = DEFAULT_LEG_ADDR;
@@ -70,6 +71,7 @@ static void handle_pull(const proto_pull_t *pull, uint32_t now_us)
         float limited = clampf(raw[j], s_jmin[j], s_jmax[j]);
         if (limited != raw[j]) status |= PROTO_STATUS_LIMIT_CLAMP;
         interp_set_target(j, limited, now_us);
+        servo_clear_override(j); // a real pull frame retakes control from any calib PWM override
     }
 
     // If we were in watchdog hold, report it once on this recovery response so
@@ -108,6 +110,7 @@ void setup()
     calib_init();        // USB serial (independent of RS485)
     persist_init();
     s_addr = persist_get_address();
+    status_led_init();
 
     rs485_init();
     servo_init();
@@ -121,12 +124,19 @@ void setup()
 
 void loop()
 {
+    // Re-read every loop (cheap RAM read, not a flash access) so a fresh
+    // ADDR over USB takes effect immediately -- including turning the status
+    // LED off -- without requiring a reboot.
+    s_addr = persist_get_address();
+    status_led_update(s_addr != 0, micros());
+
     // 1) USB calibration commands (non-blocking).
     calib_poll();
 
     // 2) RS485: respond immediately to a valid pull for this leg. Frames that
     //    fail CRC or address-match produce no response (the master treats
-    //    silence as a timeout — never NAK).
+    //    silence as a timeout — never NAK). addr 0 (uncalibrated) never
+    //    matches -- the protocol only ever addresses legs 1-6.
     char *line = rs485_poll_line();
     if (line) {
         proto_pull_t pull;

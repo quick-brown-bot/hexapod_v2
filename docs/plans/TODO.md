@@ -15,6 +15,38 @@
   - Consider PCB design for better signal integrity
   - Implement proper power management and distribution
 
+- [ ] **LegBoard total-current shunt resize (R4) for ~9A range on the total channel**
+  - Today all four current-sense channels share identical hardware:
+    INA4181A3 (100 V/V, fixed for the whole quad IC) + 10 mΩ Kelvin shunts
+    (`hardware/legboard/legboard_sch.py` R2-R5), giving `I_max = Vref /
+    (Gain×Rshunt) = 3.3V / (100×0.01Ω) ≈ 3.3A` per channel — fine for a
+    single servo branch, but the `total` channel sums up to 3 branches and
+    should have headroom toward ~9A under worst-case simultaneous stall
+  - Plan: resize **R4 only** (total shunt) from 10 mΩ to ~3 mΩ →
+    `I_max ≈ 11A`, keep R2/R3/R5 (coxa/femur/tibia branches) at 10 mΩ (gain
+    is shared across the IC, so only the shunt value can differ per channel)
+  - Requires: schematic/BOM edit via the hardware-schematics skill; physical
+    rework (desolder/resolder R4) on any already-populated LegBoards; and a
+    firmware change so `persist.cpp`'s default current-sense scale is
+    per-channel (`total` ≈ 3.333 mA/mV, branches 1.0 mA/mV) instead of one
+    shared `DEFAULT_ISENSE_MA_PER_MV` constant in `config.h`
+  - Deferred until the next board order/rework pass. See
+    `docs/development/LEG_CALIBRATION.md` "Hardware current range" for the
+    derivation and current (~3.3A, all channels) status quo
+
+- [ ] **Auto-generate the LegBoard ASCII diagram in `tools/leg_configurator.py`**
+  - `BOARD_DIAGRAM` in `tools/leg_configurator.py` is hand-drawn (from
+    `hardware/legboard/legboard_sch.py` placement +
+    `hardware/legboard/board-front.png`), not derived from the real board
+    render — fine for now (connectors don't move often) but will drift if the
+    layout changes and nobody remembers to update it by hand
+  - Idea: script `hardware/legboard/board-front.png` (or better, live
+    placement data from `legboard_sch.py`) into a small ASCII/box-drawing
+    renderer keyed by reference designator, so the diagram regenerates
+    alongside the schematic instead of being maintained separately
+  - Low priority / nice-to-have — plain text is manually accurate enough for
+    now
+
 - [ ] **IMU Integration for Terrain Leveling**
   - Add IMU sensor (accelerometer + gyroscope)
   - Implement body position/orientation estimation

@@ -50,6 +50,22 @@ int main(void)
         CHECK(p.params[1].id == 0x02 && p.params[1].value == 500, "P02=500");
     }
 
+    // --- Parse a pull with a two-digit-hex-letter param id ---
+    {
+        char line[] = ">1,00,0.0,0.0,0.0,P0C=10230*B1\n";
+        proto_pull_t p;
+        // Recompute CRC below rather than trust a hand-picked vector: this
+        // block only checks id/value decoding, not a fixed checksum, so build
+        // the frame with a body whose CRC we compute at test time instead.
+        char body[] = ">1,00,0.0,0.0,0.0,P0C=10230";
+        uint8_t crc = proto_crc8((const uint8_t *)body, strlen(body));
+        snprintf(line, sizeof(line), "%s*%02X\n", body, crc);
+        CHECK(proto_parse_pull(line, &p), "parse pull w/ hex-letter param id");
+        CHECK(p.n_params == 1, "one param");
+        CHECK(p.params[0].id == 0x0C, "id == 0x0C");
+        CHECK(p.params[0].value == 10230, "value == 10230");
+    }
+
     // --- Reject a corrupted CRC ---
     {
         char line[] = ">1,00,-45.5,-30.2,60.0*00\n";

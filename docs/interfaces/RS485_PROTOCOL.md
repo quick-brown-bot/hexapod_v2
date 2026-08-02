@@ -219,6 +219,11 @@ pending entry. A timeout leaves it pending for the next pull.
 | `08` | `TIBIA_LIMIT_MIN` | int16 (0.1°) | TBD | Tibia minimum angle hard limit |
 | `09` | `TIBIA_LIMIT_MAX` | int16 (0.1°) | TBD | Tibia maximum angle hard limit |
 
+Current-sense calibration (per-channel scale/offset) is deliberately **not**
+in this table — it's set locally over the LegBoard's own USB serial
+(`CURCAL <ch> <scale> <offset>`, `firmware/leg/src/calib.cpp`), not over
+RS485. See `docs/development/LEG_CALIBRATION.md`.
+
 On RP2040 reboot all parameters reset to firmware defaults. The ESP32 detects
 leg recovery (a response after a run of timeouts) and re-queues all non-default
 parameters for that leg.

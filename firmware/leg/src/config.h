@@ -77,13 +77,40 @@ enum { JOINT_COXA = 0, JOINT_FEMUR = 1, JOINT_TIBIA = 2 };
 #define ADC_RESOLUTION_BITS  12
 #define ADC_MAX_COUNT        ((1 << ADC_RESOLUTION_BITS) - 1)
 #define ADC_VREF_MV          3300
-// INA4181 gain and shunt are board-specific; placeholder scale converts ADC
-// volts to milliamps. Tune against measured load during bring-up.
-#define ISENSE_MA_PER_MV     1.0f
+// INA4181 gain and shunt are board-specific. DEFAULT_ISENSE_MA_PER_MV is the
+// fallback per-channel scale used until a channel has been calibrated via
+// CURCAL (see calib.cpp / tools/current_calibration); DEFAULT_ISENSE_OFFSET_MA
+// is the matching fallback offset.
+#define DEFAULT_ISENSE_MA_PER_MV   1.0f
+#define DEFAULT_ISENSE_OFFSET_MA   0.0f
+#define NUM_CURRENT_CHANNELS 4  // total, coxa, femur, tibia (ADC_CH_* order)
 
-// --- Flash persistence ---------------------------------------------------
-#define PERSIST_MAGIC    0x4C454731UL  // "LEG1"
-#define PERSIST_VERSION  1
-#define DEFAULT_LEG_ADDR 1             // overwritten by calibration
+// --- Flash persistence -----------------------------------------------------
+// Two independent EEPROM.h partitions (see persist.cpp): a tiny "identity"
+// partition (leg address) and a tiny "calib" partition (current-sense
+// scale/offset), each with its own magic/version so one can be reset or
+// reformatted without touching the other.
+// NOTE: this must never collide with the old pre-partition combined-record
+// layout (magic "LEG1"=0x4C454731, versions 1-2, leg_addr at the same
+// offset) -- a board previously flashed with that firmware would otherwise
+// have its old address bytes misread as valid new-format identity data and
+// skip reinitializing to the "uncalibrated" default. Use a distinct magic.
+#define PERSIST_IDENTITY_MAGIC    0x4C454944UL  // "LEID" (distinct from old "LEG1")
+#define PERSIST_IDENTITY_VERSION  1
+#define PERSIST_CALIB_MAGIC       0x43414C31UL  // "CAL1"
+#define PERSIST_CALIB_VERSION     1
+
+// 0 is not a valid RS485 address (the protocol uses 1-6) and marks an
+// unassigned/uncalibrated board. It is only ever set by ADDR <1-6> during
+// bring-up; the board blinks its status LED until then (see status_led.*).
+#define DEFAULT_LEG_ADDR 0
+
+// --- Status LED ------------------------------------------------------------
+// XIAO RP2040 onboard RGB LED, red channel. Common-anode: LOW = on. Blinks
+// at 2 Hz (toggle every 250 ms) while uncalibrated (leg_addr == 0); off once
+// a real address has been set.
+#define PIN_STATUS_LED_R          17
+#define STATUS_LED_ACTIVE_LOW     1
+#define STATUS_LED_BLINK_HALF_PERIOD_US  250000UL
 
 #endif // HEX_LEG_CONFIG_H
