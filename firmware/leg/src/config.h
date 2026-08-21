@@ -88,9 +88,14 @@ enum { JOINT_COXA = 0, JOINT_FEMUR = 1, JOINT_TIBIA = 2 };
 // --- Servo calibration defaults (per servo) ------------------------------
 // Calibration lives on the leg (the ESP32 cannot supply PWM calibration).
 // Compile-time defaults now; shaped for flash persistence later.
-#define DEFAULT_PWM_MIN_US      1000
+// 500-2500us matches this servo's actual rated pulse width (per its datasheet
+// label) -- the previous 1000-2000us was the generic "SG90-style" hobby-servo
+// assumption, which only exercised a narrow middle slice of this servo's real
+// travel (measured ~19-51 deg actual for a commanded 60/-90 deg on leg 1 coxa
+// before this fix). See docs/development/LEG_CALIBRATION.md.
+#define DEFAULT_PWM_MIN_US      500
 #define DEFAULT_PWM_NEUTRAL_US  1500
-#define DEFAULT_PWM_MAX_US      2000
+#define DEFAULT_PWM_MAX_US      2500
 #define DEFAULT_ANGLE_MIN_DEG   -90.0f
 #define DEFAULT_ANGLE_MAX_DEG    90.0f
 
@@ -147,7 +152,7 @@ enum { JOINT_COXA = 0, JOINT_FEMUR = 1, JOINT_TIBIA = 2 };
 #define PERSIST_IDENTITY_MAGIC    0x4C454944UL  // "LEID" (distinct from old "LEG1")
 #define PERSIST_IDENTITY_VERSION  1
 #define PERSIST_CALIB_MAGIC       0x43414C31UL  // "CAL1"
-#define PERSIST_CALIB_VERSION     3  // v3: added current-filter EMA alpha
+#define PERSIST_CALIB_VERSION     4  // v4: added per-joint PWM neutral (center)
 
 // 0 is not a valid RS485 address (the protocol uses 1-6) and marks an
 // unassigned/uncalibrated board. It is only ever set by ADDR <1-6> during

@@ -10,6 +10,8 @@
  *   help
  *   version
  *   list namespaces | list <ns>
+ *   joint <leg 1-6> <coxa_deg> <femur_deg> <tibia_deg>  -- direct per-leg joint override
+ *   joint <leg 1-6> release                             -- hand the leg back to gait/IK
  */
 
 #include "rpc_commands.h"
@@ -21,8 +23,11 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "controller_internal.h"
+#include "robot_control.h"
+#include "robot_config.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdarg.h>
 #include <ctype.h>
 
@@ -131,7 +136,47 @@ static int tokenize(char *line, char *argv[], int max_args) {
 }
 
 static void cmd_help(void) {
-	rpc_send("Commands: get set setpersist export factory-reset save list help version");
+	rpc_send("Commands: get set setpersist export factory-reset save list help version joint");
+}
+
+// Hard safety bound for direct joint overrides, independent of the (currently
+// uncalibrated) joint_cal min/max -- see docs/development/LEG_CALIBRATION.md.
+// The LegBoard applies its own compile-time PWM range clamp underneath this too.
+#define RPC_JOINT_OVERRIDE_LIMIT_DEG 60.0f
+
+static float clamp_joint_override_deg(float deg) {
+    if (deg > RPC_JOINT_OVERRIDE_LIMIT_DEG) return RPC_JOINT_OVERRIDE_LIMIT_DEG;
+    if (deg < -RPC_JOINT_OVERRIDE_LIMIT_DEG) return -RPC_JOINT_OVERRIDE_LIMIT_DEG;
+    return deg;
+}
+
+static void cmd_joint(int argc, char *argv[]) {
+    if (argc < 3) {
+        rpc_send("usage: joint <leg 1-6> <coxa_deg> <femur_deg> <tibia_deg> | joint <leg> release");
+        return;
+    }
+    int leg_1based = (int)strtol(argv[1], NULL, 10);
+    int leg = leg_1based - 1; // wire/RS485 addresses are 1-based; robot_execute() is 0-based
+    if (leg < 0 || leg >= NUM_LEGS) {
+        rpc_send("joint: leg out of range (1-%d)", NUM_LEGS);
+        return;
+    }
+
+    if (strcmp(argv[2], "release") == 0) {
+        robot_clear_leg_joint_override(leg);
+        rpc_send("joint %d: released to gait/IK control", leg_1based);
+        return;
+    }
+
+    if (argc < 5) {
+        rpc_send("usage: joint <leg 1-6> <coxa_deg> <femur_deg> <tibia_deg> | joint <leg> release");
+        return;
+    }
+    float coxa  = clamp_joint_override_deg(strtof(argv[2], NULL));
+    float femur = clamp_joint_override_deg(strtof(argv[3], NULL));
+    float tibia = clamp_joint_override_deg(strtof(argv[4], NULL));
+    robot_set_leg_joint_override_deg(leg, coxa, femur, tibia);
+    rpc_send("joint %d: coxa=%.1f femur=%.1f tibia=%.1f", leg_1based, coxa, femur, tibia);
 }
 
 static void cmd_version(void) {
@@ -331,6 +376,7 @@ static void rpc_execute_line(char *line) {
 	else if (strcmp(argv[0], "export")==0) { cmd_export(argc, argv); }
 	else if (strcmp(argv[0], "save")==0) { cmd_save(argc, argv); }
 	else if (strcmp(argv[0], "factory-reset")==0) { cmd_factory_reset(); }
+	else if (strcmp(argv[0], "joint")==0) { cmd_joint(argc, argv); }
 	else { rpc_send("unknown: %s", argv[0]); }
 }
 

@@ -6,4 +6,6 @@ idf_component_register(
     hex_config_manager
     hex_controller_core
     hex_shared_types
+    hex_actuation
+    hex_robot_config
 )
