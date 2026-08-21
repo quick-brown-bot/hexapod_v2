@@ -1,4 +1,5 @@
 #include "servo.h"
+#include "persist.h"
 
 #include "hardware/pwm.h"
 #include "hardware/gpio.h"
@@ -29,13 +30,13 @@ void servo_init(void)
         s_cal[j].angle_min_deg  = DEFAULT_ANGLE_MIN_DEG;
         s_cal[j].angle_max_deg  = DEFAULT_ANGLE_MAX_DEG;
         s_cal[j].pwm_min_us     = DEFAULT_PWM_MIN_US;
-        s_cal[j].pwm_neutral_us = DEFAULT_PWM_NEUTRAL_US;
+        s_cal[j].pwm_neutral_us = persist_get_pwm_neutral_us(j);
         s_cal[j].pwm_max_us     = DEFAULT_PWM_MAX_US;
-        s_cal[j].invert         = 1;
+        s_cal[j].invert         = persist_get_invert(j);
         s_cal[j].offset_deg     = 0.0f;
         s_override[j] = false;
         configure_slice_for_pin(s_pin[j]);
-        // Start at neutral.
+        // Start at this joint's calibrated neutral.
         pwm_set_gpio_level(s_pin[j], (uint16_t)s_cal[j].pwm_neutral_us);
     }
 }
@@ -44,6 +45,18 @@ servo_calib_t *servo_get_calib(int joint)
 {
     if (joint < 0 || joint >= NUM_JOINTS) return 0;
     return &s_cal[joint];
+}
+
+void servo_reload_pwm_neutral(int joint)
+{
+    if (joint < 0 || joint >= NUM_JOINTS) return;
+    s_cal[joint].pwm_neutral_us = persist_get_pwm_neutral_us(joint);
+}
+
+void servo_reload_invert(int joint)
+{
+    if (joint < 0 || joint >= NUM_JOINTS) return;
+    s_cal[joint].invert = persist_get_invert(joint);
 }
 
 bool servo_write_angle(int joint, float angle_deg)
@@ -56,9 +69,21 @@ bool servo_write_angle(int joint, float angle_deg)
     float clamped = clampf(a, c->angle_min_deg, c->angle_max_deg);
     bool was_clamped = (clamped != a);
 
-    float span = c->angle_max_deg - c->angle_min_deg;
-    float t = (span > 0.0f) ? (clamped - c->angle_min_deg) / span : 0.5f;
-    int32_t pulse = c->pwm_min_us + (int32_t)(t * (float)(c->pwm_max_us - c->pwm_min_us));
+    // Two-segment mapping anchored at pwm_neutral_us (angle 0), rather than a
+    // single line across [angle_min,angle_max]->[pwm_min,pwm_max] -- lets a
+    // leg's true physical center be recalibrated (PWMNEUTRAL) independently
+    // of the endpoint pulses. Degenerate ranges that don't straddle 0 just
+    // fall back to the neutral pulse for that side.
+    int32_t pulse;
+    if (clamped >= 0.0f) {
+        float span = c->angle_max_deg;
+        float t = (span > 0.0f) ? (clamped / span) : 0.0f;
+        pulse = c->pwm_neutral_us + (int32_t)(t * (float)(c->pwm_max_us - c->pwm_neutral_us));
+    } else {
+        float span = -c->angle_min_deg;
+        float t = (span > 0.0f) ? (-clamped / span) : 0.0f;
+        pulse = c->pwm_neutral_us - (int32_t)(t * (float)(c->pwm_neutral_us - c->pwm_min_us));
+    }
 
     if (pulse < c->pwm_min_us) pulse = c->pwm_min_us;
     if (pulse > c->pwm_max_us) pulse = c->pwm_max_us;

@@ -24,6 +24,8 @@ typedef struct {
     int32_t  filter_mode;  // CURRENT_FILTER_EMA / CURRENT_FILTER_BOXCAR
     float    ema_alpha;
     int32_t  boxcar_n;
+    int32_t  pwm_neutral_us[NUM_JOINTS];  // v4+: per-joint PWM center, see persist_get_pwm_neutral_us()
+    int8_t   invert[NUM_JOINTS];          // v5+: per-joint sign, see persist_get_invert()
 } persist_calib_t;
 
 #define EEPROM_SIZE            256
@@ -59,7 +61,18 @@ void persist_init(void)
     }
 
     EEPROM.get(EEPROM_OFFSET_CALIB, s_calib);
-    if (s_calib.magic != PERSIST_CALIB_MAGIC || s_calib.version != PERSIST_CALIB_VERSION) {
+    if (s_calib.magic == PERSIST_CALIB_MAGIC && s_calib.version == 4) {
+        // v4 -> v5: persist_calib_t only gained a trailing invert[] field:
+        // every earlier field (current calib, filter, pwm_neutral_us) is
+        // still at the same offset and still valid, so just default the new
+        // field and bump the version in place instead of wiping calibration
+        // that already exists on this board.
+        for (int j = 0; j < NUM_JOINTS; ++j) {
+            s_calib.invert[j] = 1;
+        }
+        s_calib.version = PERSIST_CALIB_VERSION;
+        write_calib();
+    } else if (s_calib.magic != PERSIST_CALIB_MAGIC || s_calib.version != PERSIST_CALIB_VERSION) {
         memset(&s_calib, 0, sizeof(s_calib));
         s_calib.magic = PERSIST_CALIB_MAGIC;
         s_calib.version = PERSIST_CALIB_VERSION;
@@ -70,6 +83,10 @@ void persist_init(void)
         s_calib.filter_mode = DEFAULT_CURRENT_FILTER_MODE;
         s_calib.ema_alpha = DEFAULT_CURRENT_EMA_ALPHA;
         s_calib.boxcar_n = DEFAULT_CURRENT_BOXCAR_N;
+        for (int j = 0; j < NUM_JOINTS; ++j) {
+            s_calib.pwm_neutral_us[j] = DEFAULT_PWM_NEUTRAL_US;
+            s_calib.invert[j] = 1;
+        }
         write_calib();
     }
 }
@@ -125,6 +142,36 @@ bool persist_set_current_filter(int mode, float ema_alpha, int boxcar_n)
     s_calib.filter_mode = mode;
     s_calib.ema_alpha = ema_alpha;
     s_calib.boxcar_n = boxcar_n;
+    write_calib();
+    return true;
+}
+
+int32_t persist_get_pwm_neutral_us(int joint)
+{
+    if (joint < 0 || joint >= NUM_JOINTS) return DEFAULT_PWM_NEUTRAL_US;
+    return s_calib.pwm_neutral_us[joint];
+}
+
+bool persist_set_pwm_neutral_us(int joint, int32_t pwm_neutral_us)
+{
+    if (joint < 0 || joint >= NUM_JOINTS) return false;
+    if (pwm_neutral_us < DEFAULT_PWM_MIN_US || pwm_neutral_us > DEFAULT_PWM_MAX_US) return false;
+    s_calib.pwm_neutral_us[joint] = pwm_neutral_us;
+    write_calib();
+    return true;
+}
+
+int8_t persist_get_invert(int joint)
+{
+    if (joint < 0 || joint >= NUM_JOINTS) return 1;
+    return s_calib.invert[joint];
+}
+
+bool persist_set_invert(int joint, int8_t invert)
+{
+    if (joint < 0 || joint >= NUM_JOINTS) return false;
+    if (invert != 1 && invert != -1) return false;
+    s_calib.invert[joint] = invert;
     write_calib();
     return true;
 }

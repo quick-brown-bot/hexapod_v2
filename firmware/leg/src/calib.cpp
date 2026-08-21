@@ -25,6 +25,10 @@ static void print_help(void)
     Serial.println(F("  ADDR <1-6>  -> set & persist leg address"));
     Serial.println(F("  STATUS?     -> address + identity"));
     Serial.println(F("  PWM <joint 0-2> <us>            -> raw pulse override (bring-up/calib)"));
+    Serial.println(F("  PWMNEUTRAL?                      -> per-joint PWM neutral (center) us, all 3 joints"));
+    Serial.println(F("  PWMNEUTRAL <joint 0-2> <us>      -> set & persist that joint's PWM neutral (center)"));
+    Serial.println(F("  INVERT?                          -> per-joint sign (+1/-1), all 3 joints"));
+    Serial.println(F("  INVERT <joint 0-2> <1|-1>        -> set & persist that joint's sign"));
     Serial.println(F("  CURRAW?                          -> raw ADC counts+mV, all 4 channels"));
     Serial.println(F("  CURCAL?                          -> current scale=/offset=, all 4 channels"));
     Serial.println(F("  CURCAL <ch 0-3> <scale> <offset> -> set & persist channel current calibration"));
@@ -160,6 +164,78 @@ static void handle_pwm(char *args)
     Serial.println(clamped ? F(" (clamped)") : F(""));
 }
 
+static const char *s_joint_name[NUM_JOINTS] = { "coxa", "femur", "tibia" };
+
+static void handle_pwmneutral_query(void)
+{
+    for (int j = 0; j < NUM_JOINTS; ++j) {
+        Serial.print(F("J"));
+        Serial.print(j);
+        Serial.print(F(" "));
+        Serial.print(s_joint_name[j]);
+        Serial.print(F(" neutral_us="));
+        Serial.println(persist_get_pwm_neutral_us(j));
+    }
+}
+
+// Parses "PWMNEUTRAL <joint> <us>"; args points just past "PWMNEUTRAL ". Sets
+// and persists the joint's PWM center (see servo.cpp's angle->pulse mapping)
+// and applies it live via servo_reload_pwm_neutral() -- no reboot needed.
+static void handle_pwmneutral_set(char *args)
+{
+    char *end;
+    long joint = strtol(args, &end, 10);
+    if (end == args) { Serial.println(F("ERR usage: PWMNEUTRAL <joint 0-2> <us>")); return; }
+    long us = strtol(end, &end, 10);
+    if (end == args) { Serial.println(F("ERR usage: PWMNEUTRAL <joint 0-2> <us>")); return; }
+
+    if (persist_set_pwm_neutral_us((int)joint, (int32_t)us)) {
+        servo_reload_pwm_neutral((int)joint);
+        Serial.print(F("OK PWMNEUTRAL joint="));
+        Serial.print(joint);
+        Serial.print(F(" us="));
+        Serial.println(us);
+    } else {
+        Serial.println(F("ERR joint out of range (0-2) or us out of range (pwm_min-pwm_max)"));
+    }
+}
+
+static void handle_invert_query(void)
+{
+    for (int j = 0; j < NUM_JOINTS; ++j) {
+        Serial.print(F("J"));
+        Serial.print(j);
+        Serial.print(F(" "));
+        Serial.print(s_joint_name[j]);
+        Serial.print(F(" invert="));
+        Serial.println(persist_get_invert(j));
+    }
+}
+
+// Parses "INVERT <joint> <1|-1>"; args points just past "INVERT ". Sets and
+// persists the joint's sign (see servo.cpp's angle->pulse mapping) and
+// applies it live via servo_reload_invert() -- no reboot needed. This is
+// what reconciles this leg's physical mounting/wiring with the mainboard
+// IK's leg-local sign convention -- see persist.h persist_get_invert().
+static void handle_invert_set(char *args)
+{
+    char *end;
+    long joint = strtol(args, &end, 10);
+    if (end == args) { Serial.println(F("ERR usage: INVERT <joint 0-2> <1|-1>")); return; }
+    long inv = strtol(end, &end, 10);
+    if (end == args) { Serial.println(F("ERR usage: INVERT <joint 0-2> <1|-1>")); return; }
+
+    if (persist_set_invert((int)joint, (int8_t)inv)) {
+        servo_reload_invert((int)joint);
+        Serial.print(F("OK INVERT joint="));
+        Serial.print(joint);
+        Serial.print(F(" invert="));
+        Serial.println(inv);
+    } else {
+        Serial.println(F("ERR joint out of range (0-2) or invert must be 1 or -1"));
+    }
+}
+
 static void handle_line(char *line)
 {
     // Trim leading spaces.
@@ -197,6 +273,14 @@ static void handle_line(char *line)
         handle_loopstat();
     } else if (strncmp(line, "PWM ", 4) == 0) {
         handle_pwm(line + 4);
+    } else if (strcmp(line, "PWMNEUTRAL?") == 0) {
+        handle_pwmneutral_query();
+    } else if (strncmp(line, "PWMNEUTRAL ", 11) == 0) {
+        handle_pwmneutral_set(line + 11);
+    } else if (strcmp(line, "INVERT?") == 0) {
+        handle_invert_query();
+    } else if (strncmp(line, "INVERT ", 7) == 0) {
+        handle_invert_set(line + 7);
     } else if (line[0] != '\0') {
         Serial.println(F("ERR unknown command (try HELP)"));
     }

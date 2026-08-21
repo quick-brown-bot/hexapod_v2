@@ -152,7 +152,7 @@ enum { JOINT_COXA = 0, JOINT_FEMUR = 1, JOINT_TIBIA = 2 };
 #define PERSIST_IDENTITY_MAGIC    0x4C454944UL  // "LEID" (distinct from old "LEG1")
 #define PERSIST_IDENTITY_VERSION  1
 #define PERSIST_CALIB_MAGIC       0x43414C31UL  // "CAL1"
-#define PERSIST_CALIB_VERSION     4  // v4: added per-joint PWM neutral (center)
+#define PERSIST_CALIB_VERSION     5  // v5: added per-joint sign inversion
 
 // 0 is not a valid RS485 address (the protocol uses 1-6) and marks an
 // unassigned/uncalibrated board. It is only ever set by ADDR <1-6> during

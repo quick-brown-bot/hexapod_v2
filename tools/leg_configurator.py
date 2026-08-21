@@ -3,20 +3,28 @@
 USB serial console (firmware/leg/src/calib.cpp) -- no separate calibration
 board or RS485 link needed.
 
-Wizard flow:
-  1. Leg address: shows the currently-set address (if any) as the default,
-     or prompts for one if the board is uncalibrated (address 0). Confirms
-     over `ADDR`.
-  2. Prints an ASCII top-view of the board so you know which connector is
-     which before touching anything.
-  3. Zero-load offsets, all 4 channels at once: disconnect all three servos
+Modes (--mode):
+  full     (default) leg address -> current-sense calibration -> servo
+           calibration, in sequence.
+  address  Just assign/confirm the leg's RS485 address (`ADDR`), nothing else.
+  current  Current-sense calibration only (see below).
+  servo    Servo calibration only: PWM center (neutral), a gentle direction
+           check, and an optional extended range walk (see below).
+
+Every mode except 'address' shows the board diagram and confirms/sets the
+leg address first, since both current-sense and servo work need you to know
+which physical connector is which.
+
+## Current-sense calibration (--mode current, and part of full)
+
+  1. Zero-load offsets, all 4 channels at once: disconnect all three servos
      and one CURRAW? poll (averaged over FINAL_SAMPLE_COUNT samples) reports
      every channel's offset error in one step -- no separate "disconnect for
      total" pass, since a single poll already covers total/coxa/femur/tibia.
      Offset matters far more than scale here (the INA4181 gain + shunt put
      scale theoretically near 1.0, and it lands ~0.97-0.99 in practice), so
      this alone is enough for a reasonable calibration.
-  4. Choose how far to take it:
+  2. Choose how far to take it:
      - Enter/'n' (default): write scale=1.0 with the just-measured offset to
        all 4 channels and stop there.
      - a number 0-2: use that as the scale for all 4 channels (still with
@@ -24,7 +32,7 @@ Wizard flow:
        boards runs close to 0.98, skip the resistor dance entirely.
      - 'y': go on to full per-channel resistor calibration (below), reusing
        the zero point already measured instead of re-measuring it.
-  5. Resistor calibration (only if 'y' above), for each of coxa/femur/tibia
+  3. Resistor calibration (only if 'y' above), for each of coxa/femur/tibia
      in turn: attach each of a few known THT resistor loads. The reading is
      shown live (updated in place) and the load is auto-detected once it
      deviates from the zero-point baseline and settles -- no confirmation
@@ -46,16 +54,62 @@ Wizard flow:
      stay disconnected for the *whole* session, not just their own step --
      the wizard prints a reminder before starting.
 
-The suggested resistor values stay in the tens-of-mA range on purpose -- the
-INA4181 current-shunt amplifier is linear by design, so a handful of
-low-power points is enough; there's no need (or safe simple way) to source
-amps through a small THT resistor. See docs/development/LEG_CALIBRATION.md.
+  The suggested resistor values stay in the tens-of-mA range on purpose --
+  the INA4181 current-shunt amplifier is linear by design, so a handful of
+  low-power points is enough; there's no need (or safe simple way) to source
+  amps through a small THT resistor. See docs/development/LEG_CALIBRATION.md.
+
+  The very first step (disconnect all three servos, then Enter to take the
+  zero-load reading) can be skipped with Esc instead of Enter -- skips
+  current-sense calibration entirely for this run and leaves whatever is
+  already stored on the board untouched, e.g. if you only came to check/
+  adjust servo centers.
+
+## Servo calibration (--mode servo, and part of full)
+
+  For each selected joint, in turn:
+  1. Center: a live jog UI -- UP/DOWN nudges the pulse width by
+     JOG_STEP_FINE_US, LEFT/RIGHT by the coarser JOG_STEP_COARSE_US, the
+     leg moves and the current value redraws in place as you go. Enter
+     accepts and persists that pulse as the joint's PWM neutral
+     (`PWMNEUTRAL`) -- compensates for a leg that can't be mounted with
+     exactly 1500us at its true physical center (a servo horn spline is
+     rarely a perfect fit). Esc cancels, leaving the previous center
+     untouched. Takes effect immediately -- also what `--zero` centers to
+     afterward, and what a commanded angle of 0 degrees maps to in normal
+     (RS485-driven) operation.
+  2. Gentle direction check: a small nudge (`--step` us, default 100) to
+     each side of that just-set center, confirmed step by step (Enter to
+     continue, 'q' to quit) so you can watch which physical direction each
+     move produces -- catches a backwards joint before doing anything more.
+     Current is sampled at every step against a just-measured neutral
+     baseline, as a stall/binding safety net (informational only, not a
+     hard cutoff). Asks what direction you saw for each nudge and prints the
+     expected direction per the mainboard IK's leg-local convention (femur/
+     tibia only -- coxa's expected yaw direction depends on this leg's mount
+     rotation, which this script has no access to). If it doesn't match,
+     offers to flip and persist that joint's sign (`INVERT`) right there and
+     re-nudges so you can confirm the fix immediately, instead of finding out
+     during a later IK/gait test.
+  3. Optional, asked once after all selected joints' gentle checks: an
+     extended range walk per joint toward the min/max pulse in the same
+     small increments, still step-confirmed and current-monitored, to find
+     the safe usable range without jamming anything.
+
+  All joints return to their (possibly just-recalibrated) center at the end,
+  or immediately if you quit early with 'q'. Angle range
+  (`angle_min_deg`/`angle_max_deg`) is not yet calibratable this way -- still
+  a compile-time default, see `firmware/leg/README.md` "Bring-Up Status/TODO".
 
 Usage:
-    python tools/leg_configurator.py                          # auto-detects the port
-    python tools/leg_configurator.py --port COM10              # or name it explicitly
-    python tools/leg_configurator.py --channels coxa,femur
-    python tools/leg_configurator.py --zero                    # build aid: center all 3 servos
+    python tools/leg_configurator.py                          # full wizard, auto-detects the port
+    python tools/leg_configurator.py --port COM10
+    python tools/leg_configurator.py --mode address             # just set the leg number
+    python tools/leg_configurator.py --mode current              # current-sense calibration only
+    python tools/leg_configurator.py --mode current --channels coxa
+    python tools/leg_configurator.py --mode servo                # servo center/direction/range only
+    python tools/leg_configurator.py --mode servo --channels femur --step 150
+    python tools/leg_configurator.py --zero                      # build aid: center all 3 servos
 
 Requires pyserial -- if you don't have it in your default Python, run this
 with PlatformIO's bundled interpreter instead:
@@ -89,13 +143,29 @@ except ImportError:
 # out unrelated ports (Bluetooth virtual COM ports, etc.) when auto-detecting.
 RP2040_USB_VID = 0x2E8A
 
-# calib.cpp channel indices (ADC_CH_TOTAL/COXA/FEMUR/TIBIA order).
+# calib.cpp channel indices (ADC_CH_TOTAL/COXA/FEMUR/TIBIA order). Note these
+# are current-sense channel indices, NOT the same numbering as the PWM joint
+# indices below (JOINTS) -- different namespaces that happen to overlap.
 CHANNELS = {"coxa": 1, "femur": 2, "tibia": 3}
 ALL_CHANNEL_NAMES = {0: "total", 1: "coxa", 2: "femur", 3: "tibia"}
 # Servo connector per channel, from hardware/legboard/legboard_sch.py
 # (J2/COXA_PWM, J3/FEMUR_PWM, J4/TIBIA_PWM) -- see the board diagram below.
 CONNECTOR = {"coxa": "J2", "femur": "J3", "tibia": "J4"}
-NEUTRAL_PWM_US = 1500  # DEFAULT_PWM_NEUTRAL_US, firmware/leg/src/config.h
+NEUTRAL_PWM_US = 1500  # DEFAULT_PWM_NEUTRAL_US, firmware/leg/src/config.h -- only the
+                       # factory fallback; the actual per-joint center may have been
+                       # recalibrated, see query_pwm_neutral() / --mode servo.
+PWM_MIN_US = 500       # DEFAULT_PWM_MIN_US
+PWM_MAX_US = 2500      # DEFAULT_PWM_MAX_US
+
+# PWM joint indices (calib.cpp's PWM/PWMNEUTRAL commands, config.h JOINT_COXA/
+# FEMUR/TIBIA) -- in build order, distinct from the current-sense CHANNELS above.
+JOINTS = [("coxa", 0), ("femur", 1), ("tibia", 2)]
+
+# --mode servo: purely informational -- flags a current jump worth a second
+# look while jogging/testing a joint, not a hard safety cutoff (the board may
+# not be current-calibrated yet, so this compares raw mV against the
+# just-measured neutral baseline, not amps).
+CURRENT_WARN_DELTA_MV = 15.0
 
 # Common E12 THT resistor values, low-to-high current, with the minimum
 # power rating each needs at a ~6V servo rail (kept small on purpose).
@@ -206,6 +276,113 @@ def autodetect_port() -> str:
         print(f"  [{i}] {p.device}  {p.description}")
     idx = input("Select port: ").strip()
     return candidates[int(idx)].device
+
+
+# --- Raw single-keypress reading (servo jog UI, disconnect-servos skip) ---
+#
+# Used where a full Enter-terminated line is the wrong interaction: live
+# arrow-key jogging (interactive_center_joint()) and a plain Enter-vs-Esc
+# choice (wait_confirm_or_skip()). Normalizes to 'UP'/'DOWN'/'LEFT'/'RIGHT'/
+# 'ENTER'/'ESC'/'Q', or a single printable character otherwise.
+#
+# POSIX: puts the terminal in cbreak mode (termios/tty) for the duration and
+# reads raw bytes, disambiguating a lone Esc from the start of an arrow-key
+# escape sequence (ESC '[' 'A'/'B'/'C'/'D') with a short non-blocking peek
+# (arrow-key bytes arrive together; a real Esc press has nothing following
+# it). Windows: msvcrt.getwch(), which already returns arrow keys as a
+# two-call prefix+code pair, no raw-mode switch needed. Neither path works
+# without a real interactive terminal (e.g. piped/redirected stdin) -- falls
+# back to line input there, treating a blank line as ENTER and 'esc'/'skip'
+# as ESC.
+
+def _posix_read_key(fd) -> str:
+    # Deliberately os.read() on the raw fd, not sys.stdin.read(): a buffered
+    # TextIOWrapper read can slurp more bytes than requested into its own
+    # userspace buffer in one syscall, which would make the select() peeks
+    # below (which only see what's still sitting in the kernel) wrongly
+    # report "nothing pending" for bytes Python already grabbed -- turning
+    # every arrow-key sequence into a false lone-Esc.
+    import os
+    import select
+    ch = os.read(fd, 1).decode(errors="replace")
+    if ch == "\x1b":
+        if select.select([fd], [], [], 0.02)[0]:
+            ch2 = os.read(fd, 1).decode(errors="replace")
+            if ch2 == "[" and select.select([fd], [], [], 0.02)[0]:
+                ch3 = os.read(fd, 1).decode(errors="replace")
+                return {"A": "UP", "B": "DOWN", "C": "RIGHT", "D": "LEFT"}.get(ch3, "ESC")
+            return "ESC"
+        return "ESC"
+    if ch in ("\r", "\n"):
+        return "ENTER"
+    return ch
+
+
+def _win_read_key() -> str:
+    c = msvcrt.getwch()
+    if c in ("\x00", "\xe0"):  # arrow/function-key prefix
+        c2 = msvcrt.getwch()
+        return {"H": "UP", "P": "DOWN", "K": "LEFT", "M": "RIGHT"}.get(c2, "")
+    if c == "\x1b":
+        return "ESC"
+    if c in ("\r", "\n"):
+        return "ENTER"
+    return c
+
+
+class RawKeys:
+    """Context manager + single-keypress reader; see module note above."""
+
+    def __init__(self):
+        self._posix = sys.platform != "win32" and sys.stdin.isatty()
+        self._interactive = self._posix or msvcrt is not None
+
+    def __enter__(self):
+        if self._posix:
+            import termios
+            import tty
+            self._termios = termios
+            self._fd = sys.stdin.fileno()
+            self._old = termios.tcgetattr(self._fd)
+            tty.setcbreak(self._fd)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._posix:
+            self._termios.tcsetattr(self._fd, self._termios.TCSADRAIN, self._old)
+        return False
+
+    def read(self) -> str:
+        if self._posix:
+            key = _posix_read_key(self._fd)
+        elif msvcrt is not None:
+            key = _win_read_key()
+        else:
+            # No raw keyboard available (e.g. non-interactive stdin) -- fall
+            # back to line input; arrow-key jogging degrades to typing an
+            # exact value followed by Enter.
+            s = input().strip()
+            if s == "":
+                return "ENTER"
+            if s.lower() in ("esc", "escape", "skip"):
+                return "ESC"
+            return s
+        return "Q" if key in ("q", "Q") else key
+
+
+def wait_confirm_or_skip(prompt: str) -> bool:
+    """Print `prompt`, then wait for a single keypress: Enter confirms and
+    proceeds (True), Esc (or 'q') skips (False)."""
+    print(f"{prompt} [Enter=confirm, Esc=skip] ", end="", flush=True)
+    with RawKeys() as keys:
+        while True:
+            key = keys.read()
+            if key == "ENTER":
+                print()
+                return True
+            if key in ("ESC", "Q"):
+                print("skipped.")
+                return False
 
 
 def read_all_raw_mv(link: LegLink) -> dict:
@@ -444,14 +621,18 @@ def prompt_leg_address(link: LegLink) -> int:
 TOTAL_CH = 0
 
 
-def measure_all_offsets(link: LegLink) -> dict:
+def measure_all_offsets(link: LegLink):
     """The one, shared zero-load measurement: with nothing connected to any
     of the three servo channels, current_ma should read 0 everywhere, so
     whatever raw mV each channel reports *is* that channel's offset error.
     One CURRAW? poll already reports all 4 channels, so this covers total
     too in the same step -- no separate "disconnect for total" pass needed.
+
+    Returns the averaged {channel: mv} dict, or None if skipped (Esc) --
+    the caller then skips current-sense calibration entirely for this run.
     """
-    wait_enter("Disconnect all three servos (coxa/femur/tibia -- open circuit, no load), then press Enter.")
+    if not wait_confirm_or_skip("Disconnect all three servos (coxa/femur/tibia -- open circuit, no load), then press Enter."):
+        return None
     avg = sample_averaged(link, TOTAL_CH)
     print("Zero-load raw readings (this channel's offset error):")
     for ch, name in ALL_CHANNEL_NAMES.items():
@@ -580,48 +761,332 @@ def calibrate_total(link: LegLink, total_raw: list, total_ref: list) -> None:
         print(f"ERR unexpected response: {resp}")
 
 
+def query_pwm_neutral(link: LegLink) -> dict:
+    """{joint_index: persisted PWM neutral (center) us} from PWMNEUTRAL?."""
+    lines = link.command("PWMNEUTRAL?", expect_lines=3)
+    out = {}
+    for line in lines:
+        if not line.startswith("J"):
+            continue
+        toks = line.split()
+        try:
+            j = int(toks[0][1:])
+        except ValueError:
+            continue
+        for t in toks:
+            if t.startswith("neutral_us="):
+                out[j] = int(t[len("neutral_us="):])
+    return out
+
+
+def query_invert(link: LegLink) -> dict:
+    """{joint_index: persisted sign (+1/-1)} from INVERT?."""
+    lines = link.command("INVERT?", expect_lines=3)
+    out = {}
+    for line in lines:
+        if not line.startswith("J"):
+            continue
+        toks = line.split()
+        try:
+            j = int(toks[0][1:])
+        except ValueError:
+            continue
+        for t in toks:
+            if t.startswith("invert="):
+                out[j] = int(t[len("invert="):])
+    return out
+
+
+def persist_invert(link: LegLink, joint: int, invert: int) -> bool:
+    resp = link.command(f"INVERT {joint} {invert}", expect_lines=1)
+    ok = bool(resp) and resp[0].startswith("OK")
+    print(f"    -> {resp[0] if resp else '(no response)'}")
+    return ok
+
+
+# Expected direction for a *positive* commanded angle, per the mainboard IK's
+# leg-local convention (hex_kinematics/leg.c) -- derived numerically, not just
+# read off a comment, since only tibia has one ("increasing angle = foot
+# lowers"); femur's sign isn't documented anywhere and had to be worked out
+# from the actual IK formula. Coxa yaw's meaning in body-frame terms depends
+# on this leg's mount rotation (docs/architecture/HARDWARE_AND_MECHANICS.md
+# "Coordinate Conventions"), which this script has no access to -- so there's
+# no universal expectation to print for it here.
+JOINT_EXPECTED_HINT = {
+    "coxa": None,
+    "femur": "foot should rise (up) for a positive angle, per the IK model",
+    "tibia": "foot should lower (down) for a positive angle, per the IK model",
+}
+
+
 def run_zero_position(link: LegLink) -> None:
-    print(f"Centering all three servos to {NEUTRAL_PWM_US} us for assembly...")
-    for joint in range(3):
-        resp = link.command(f"PWM {joint} {NEUTRAL_PWM_US}", expect_lines=1)
-        print(f"  joint {joint}: {resp[0] if resp else '(no response)'}")
+    neutral = query_pwm_neutral(link)
+    print("Centering all three servos to their calibrated PWM neutral for assembly...")
+    for name, joint in JOINTS:
+        us = neutral.get(joint, NEUTRAL_PWM_US)
+        resp = link.command(f"PWM {joint} {us}", expect_lines=1)
+        print(f"  {name} (joint {joint}): {us} us -- {resp[0] if resp else '(no response)'}")
     print("Done -- these are raw overrides, not persisted; power-cycle or send a real")
     print("target (e.g. from the mainboard) to release them.")
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--port", help="serial port, e.g. COM10 (auto-detected if omitted)")
-    ap.add_argument("--baud", type=int, default=115200)
-    ap.add_argument("--channels", default="coxa,femur,tibia",
-                     help="comma-separated subset of coxa,femur,tibia (default: all three)")
-    ap.add_argument("--zero", action="store_true",
-                     help="build aid: center all 3 servos and exit (skips current calibration)")
-    args = ap.parse_args()
+# --- Servo calibration (--mode servo): PWM center, direction, range -------
 
-    names = [n.strip() for n in args.channels.split(",") if n.strip()]
-    for n in names:
-        if n not in CHANNELS:
-            print(f"Unknown channel '{n}', must be one of {list(CHANNELS)}", file=sys.stderr)
-            sys.exit(1)
+class Abort(Exception):
+    """Raised when the user quits early ('q' at any --mode servo prompt)."""
 
-    port = args.port or autodetect_port()
-    link = LegLink(port, args.baud)
 
-    ping = link.command("PING", expect_lines=1)
-    print(f"Connected: {ping[0] if ping else '(no response)'}")
+def wizard_step(text: str) -> None:
+    """Print an upcoming action and wait for the user to press Enter.
+    Typing 'q' aborts the servo wizard (caught by the caller, which
+    re-centers before returning)."""
+    print(f"\n>>> {text}")
+    ans = input("    [Enter to continue, q to quit] > ").strip().lower()
+    if ans == "q":
+        raise Abort()
 
-    print(BOARD_DIAGRAM)
 
+def confirm(prompt: str, default_yes: bool = False) -> bool:
+    suffix = "[Y/n]" if default_yes else "[y/N]"
+    ans = input(f"{prompt} {suffix} > ").strip().lower()
+    if ans == "":
+        return default_yes
+    return ans in ("y", "yes")
+
+
+def send_pwm(link: LegLink, joint: int, us: int) -> None:
+    resp = link.command(f"PWM {joint} {us}", expect_lines=1)
+    print(f"    -> {resp[0] if resp else '(no response)'}")
+
+
+def send_pwm_quiet(link: LegLink, joint: int, us: int) -> None:
+    """Like send_pwm(), but silent -- for the live jog UI, which redraws its
+    own single status line instead of printing a response per keypress."""
+    link.command(f"PWM {joint} {us}", expect_lines=1)
+
+
+def report_current(link: LegLink, ch: int, baseline_mv: dict) -> None:
+    raw = read_all_raw_mv(link)
+    mv = raw.get(ch, 0.0)
+    base = baseline_mv.get(ch, 0.0)
+    delta = mv - base
+    flag = "  <-- WATCH THIS: jumped well above the neutral baseline" \
+        if abs(delta) >= CURRENT_WARN_DELTA_MV else ""
+    print(f"    current CH{ch}: {mv:7.2f} mV (baseline {base:7.2f} mV, delta {delta:+6.2f} mV){flag}")
+
+
+def center_all_to_neutral(link: LegLink, neutral: dict) -> None:
+    for name, joint in JOINTS:
+        send_pwm(link, joint, neutral.get(joint, NEUTRAL_PWM_US))
+
+
+JOG_STEP_FINE_US = 5     # UP/DOWN
+JOG_STEP_COARSE_US = 25  # LEFT/RIGHT
+
+
+def interactive_center_joint(link: LegLink, name: str, joint: int, us: int) -> int:
+    """Live-jog `joint`'s raw PWM pulse (starting from `us`) with the arrow
+    keys until it looks physically centered for this leg's build. UP/DOWN
+    step by JOG_STEP_FINE_US, LEFT/RIGHT by the coarser JOG_STEP_COARSE_US;
+    the pulse is sent and the status line redrawn on every step. Enter
+    accepts and returns the new pulse width (caller persists it via
+    PWMNEUTRAL); Esc cancels, restores, and returns the original `us`
+    unchanged.
+
+    Falls back to typed values (no arrow keys) if stdin isn't a real
+    terminal -- see RawKeys."""
+    original = us
+    send_pwm_quiet(link, joint, us)
+    print(f"\n--- {name} (joint {joint}) -- centering, starting at {us} us ---")
+
+    def redraw():
+        sys.stdout.write(
+            f"\r  {us} us   "
+            f"[UP/DOWN ±{JOG_STEP_FINE_US}us, LEFT/RIGHT ±{JOG_STEP_COARSE_US}us, "
+            f"Enter=accept, Esc=cancel]      "
+        )
+        sys.stdout.flush()
+
+    redraw()
+    with RawKeys() as keys:
+        while True:
+            key = keys.read()
+            if key == "ENTER":
+                print()
+                return us
+            if key in ("ESC", "Q"):
+                if us != original:
+                    send_pwm_quiet(link, joint, original)
+                print(f"\n  cancelled, keeping {original} us")
+                return original
+            delta = {
+                "UP": JOG_STEP_FINE_US, "DOWN": -JOG_STEP_FINE_US,
+                "RIGHT": JOG_STEP_COARSE_US, "LEFT": -JOG_STEP_COARSE_US,
+            }.get(key)
+            if delta is None:
+                # Non-interactive fallback (RawKeys returns typed text here):
+                # accept a directly-typed pulse width too.
+                try:
+                    us = max(PWM_MIN_US, min(PWM_MAX_US, int(key)))
+                    send_pwm_quiet(link, joint, us)
+                    redraw()
+                except ValueError:
+                    pass
+                continue
+            us = max(PWM_MIN_US, min(PWM_MAX_US, us + delta))
+            send_pwm_quiet(link, joint, us)
+            redraw()
+
+
+def persist_neutral(link: LegLink, joint: int, us: int) -> None:
+    resp = link.command(f"PWMNEUTRAL {joint} {us}", expect_lines=1)
+    if resp and resp[0].startswith("OK"):
+        print(f"OK persisted: {resp[0]}")
+    else:
+        print(f"ERR unexpected response: {resp}")
+
+
+def gentle_direction_check(link: LegLink, name: str, joint: int, ch: int,
+                            step_us: int, us_neutral: int, baseline_mv: dict) -> None:
+    """Nudges +/- around center, asks what direction you saw, and -- since
+    this is a raw PWM nudge, not a commanded angle -- a *positive* pulse here
+    is what servo.cpp calls "positive" before INVERT is applied. Offers to
+    flip and persist INVERT if what you saw doesn't match the IK model's
+    convention (see JOINT_EXPECTED_HINT), then re-nudges so you can confirm
+    the fix without re-running the whole wizard."""
+    print(f"\n=== {name.upper()} (joint {joint}) -- gentle direction check around {us_neutral} us ===")
+    hint = JOINT_EXPECTED_HINT.get(name)
+    if hint:
+        print(f"    expected for + : {hint}")
+    else:
+        print("    expected for + : depends on this leg's mount rotation -- no universal answer here")
+
+    while True:
+        wizard_step(f"{name}: confirm at center ({us_neutral} us)")
+        send_pwm(link, joint, us_neutral)
+        report_current(link, ch, baseline_mv)
+
+        wizard_step(f"{name}: move to {us_neutral + step_us} us (+{step_us}). Watch which way it moves.")
+        send_pwm(link, joint, us_neutral + step_us)
+        report_current(link, ch, baseline_mv)
+        pos_seen = input("    which way did it move? ").strip()
+
+        wizard_step(f"{name}: back to center ({us_neutral} us)")
+        send_pwm(link, joint, us_neutral)
+        report_current(link, ch, baseline_mv)
+
+        wizard_step(f"{name}: move to {us_neutral - step_us} us (-{step_us}). "
+                    f"Should be the opposite direction.")
+        send_pwm(link, joint, us_neutral - step_us)
+        report_current(link, ch, baseline_mv)
+        neg_seen = input("    which way did it move? ").strip()
+
+        wizard_step(f"{name}: back to center ({us_neutral} us) before the next joint")
+        send_pwm(link, joint, us_neutral)
+        report_current(link, ch, baseline_mv)
+
+        print(f"    recorded: +{step_us} us -> {pos_seen or '(no answer)'}   "
+              f"-{step_us} us -> {neg_seen or '(no answer)'}")
+
+        if not confirm(f"Does that match what {name} should do (invert it if not)?", default_yes=True):
+            current = query_invert(link).get(joint, 1)
+            new_invert = -current
+            print(f"    flipping INVERT: {current} -> {new_invert}")
+            if persist_invert(link, joint, new_invert):
+                print("    re-running the nudge with the new sign so you can confirm it...")
+                continue
+        break
+
+
+def extended_range_walk(link: LegLink, name: str, joint: int, ch: int,
+                         step_us: int, us_neutral: int, baseline_mv: dict) -> None:
+    print(f"\n=== {name.upper()} (joint {joint}) -- extended range walk ===")
+    print("    Stepping toward the max pulse width first, then back through the")
+    print("    center toward the min. Stop at the first sign of binding or a")
+    print("    sustained current jump.")
+
+    for target in range(us_neutral, PWM_MAX_US + 1, step_us):
+        wizard_step(f"{name}: {target} us (toward max {PWM_MAX_US} us)")
+        send_pwm(link, joint, target)
+        report_current(link, ch, baseline_mv)
+
+    wizard_step(f"{name}: back to center ({us_neutral} us)")
+    send_pwm(link, joint, us_neutral)
+    report_current(link, ch, baseline_mv)
+
+    for target in range(us_neutral, PWM_MIN_US - 1, -step_us):
+        wizard_step(f"{name}: {target} us (toward min {PWM_MIN_US} us)")
+        send_pwm(link, joint, target)
+        report_current(link, ch, baseline_mv)
+
+    wizard_step(f"{name}: back to center ({us_neutral} us) before the next joint")
+    send_pwm(link, joint, us_neutral)
+    report_current(link, ch, baseline_mv)
+
+
+def run_servo_calibration(link: LegLink, names, step_us: int) -> None:
+    """Per selected joint: interactively recalibrate the PWM center, then a
+    step-confirmed gentle direction check around that center, then an
+    optional extended range walk -- see the module docstring's "Servo
+    calibration" section for the full flow."""
+    print("\n=== Servo calibration: PWM center, direction, and range ===")
+    print("Make sure the leg is free to move, and watch it (and the current")
+    print("readout below) throughout. Type 'q' at any prompt to stop early --")
+    print("all joints return to center first.")
+
+    joint_of = dict(JOINTS)
+    try:
+        neutral = query_pwm_neutral(link)
+        wizard_step("Center all three servos to their current calibrated neutral")
+        center_all_to_neutral(link, neutral)
+
+        wizard_step("Look at the leg: does the neutral pose look right? "
+                    "Sampling the current baseline next.")
+        baseline_mv = sample_averaged(link, TOTAL_CH)
+        print("Baseline current at neutral, unloaded:")
+        for name, joint in JOINTS:
+            ch = CHANNELS[name]
+            print(f"    {name:>5} (CH{ch}): {baseline_mv.get(ch, 0.0):7.2f} mV")
+        print(f"    total (CH{TOTAL_CH}): {baseline_mv.get(TOTAL_CH, 0.0):7.2f} mV")
+
+        for name in names:
+            joint = joint_of[name]
+            ch = CHANNELS[name]
+            us_before = neutral.get(joint, NEUTRAL_PWM_US)
+
+            us = interactive_center_joint(link, name, joint, us_before)
+            if us != us_before:
+                persist_neutral(link, joint, us)
+            neutral[joint] = us
+
+            gentle_direction_check(link, name, joint, ch, step_us, us, baseline_mv)
+
+        if confirm("\nGentle checks done. Run the extended range walk too?"):
+            for name in names:
+                joint = joint_of[name]
+                ch = CHANNELS[name]
+                extended_range_walk(link, name, joint, ch, step_us, neutral[joint], baseline_mv)
+
+        wizard_step("All done -- return everything to center")
+        center_all_to_neutral(link, neutral)
+        print("\nServo calibration complete.")
+
+    except Abort:
+        print("\nQuit requested -- returning all servos to center before exiting.")
+        center_all_to_neutral(link, query_pwm_neutral(link))
+
+
+def run_address_only(link: LegLink) -> None:
     addr = prompt_leg_address(link)
-    print(f"\nConfiguring leg {addr}.")
+    print(f"\nLeg address set to {addr}.")
 
-    if args.zero:
-        run_zero_position(link)
-        return
 
+def run_current_calibration(link: LegLink, names) -> None:
     print()
     zero_mv = measure_all_offsets(link)
+    if zero_mv is None:
+        print("Skipped current-sense calibration.")
+        return
 
     mode, scale = prompt_calibration_mode()
 
@@ -629,7 +1094,7 @@ def main() -> None:
         print(f"\nWriting scale={scale:.6f} with the measured offsets to all 4 channels...")
         for ch in ALL_CHANNEL_NAMES:
             push_offset_only(link, ch, scale, zero_mv.get(ch, 0.0))
-        print("\nDone.")
+        print("\nCurrent calibration done.")
         return
 
     print("\nTip: for a bonus 'total' channel calibration piggybacked for free on the")
@@ -646,7 +1111,58 @@ def main() -> None:
     else:
         print("\nSkipping total: not enough points collected for a fit.")
 
-    print("\nDone.")
+    print("\nCurrent calibration done.")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--port", help="serial port, e.g. COM10 (auto-detected if omitted)")
+    ap.add_argument("--baud", type=int, default=115200)
+    ap.add_argument("--mode", choices=["full", "address", "current", "servo"], default="full",
+                     help="full (default): address + current-sense + servo calibration in "
+                          "sequence; address: just set the leg number; current: current-sense "
+                          "calibration only; servo: PWM center/direction/range calibration only")
+    ap.add_argument("--channels", default="coxa,femur,tibia",
+                     help="comma-separated subset of coxa,femur,tibia -- applies to current/servo "
+                          "work (default: all three)")
+    ap.add_argument("--step", type=int, default=100,
+                     help="servo mode: pulse-width nudge in us for the gentle direction check and "
+                          "the extended range walk (default 100)")
+    ap.add_argument("--zero", action="store_true",
+                     help="build aid: center all 3 servos to their calibrated neutral and exit")
+    args = ap.parse_args()
+
+    names = [n.strip() for n in args.channels.split(",") if n.strip()]
+    for n in names:
+        if n not in CHANNELS:
+            print(f"Unknown channel '{n}', must be one of {list(CHANNELS)}", file=sys.stderr)
+            sys.exit(1)
+
+    port = args.port or autodetect_port()
+    link = LegLink(port, args.baud)
+
+    ping = link.command("PING", expect_lines=1)
+    print(f"Connected: {ping[0] if ping else '(no response)'}")
+
+    if args.zero:
+        run_zero_position(link)
+        return
+
+    if args.mode == "address":
+        run_address_only(link)
+        return
+
+    print(BOARD_DIAGRAM)
+    addr = prompt_leg_address(link)
+    print(f"\nConfiguring leg {addr}.")
+
+    if args.mode == "current":
+        run_current_calibration(link, names)
+    elif args.mode == "servo":
+        run_servo_calibration(link, names, args.step)
+    else:  # full
+        run_current_calibration(link, names)
+        run_servo_calibration(link, names, args.step)
 
 
 if __name__ == "__main__":

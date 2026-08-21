@@ -38,6 +38,7 @@ src/
   rs485.h/.cpp   UART0 half-duplex transport with manual DE turnaround
   interp.h/.c    Local LINEAR / cubic-Hermite interpolation between targets
   servo.h/.cpp   Hardware PWM at 50 Hz, angle->pulse via per-servo calibration
+                 (PWM neutral/center is flash-persisted per joint, USB PWMNEUTRAL)
   current.h/.cpp INA4181 current sensing via the RP2040 ADC
   persist.h/.cpp Flash-backed leg address + current calibration (arduino-pico EEPROM,
                  two independent partitions)
@@ -60,15 +61,18 @@ test/
   final CRC byte is not truncated at 1 Mbps.
 - **Silence is the protocol.** On CRC failure or an address mismatch the leg
   sends nothing; the master treats silence as a timeout. The leg never NAKs.
-- **Persistence split.** Only the leg address and current-sense calibration are
-  stored in flash, in two independent EEPROM.h partitions (`persist.cpp`) so
-  resetting one doesn't touch the other. Runtime parameters (move duration,
-  watchdog timeout, interpolation mode, joint limits) default in firmware and
-  are re-applied by the ESP32 on recovery — matching the protocol doc's
-  "simplest first" approach. Current-sense calibration is set locally over
-  USB (`CURCAL`) only — it's a board-specific constant the leg owns, not
-  something the ESP32 needs to know or re-apply, so it deliberately has no
-  RS485 counterpart. See `docs/development/LEG_CALIBRATION.md`.
+- **Persistence split.** Only the leg address, current-sense calibration, and
+  per-joint PWM neutral (center) are stored in flash, in two independent
+  EEPROM.h partitions (`persist.cpp`) so resetting one doesn't touch the
+  other. Runtime parameters (move duration, watchdog timeout, interpolation
+  mode, joint limits) default in firmware and are re-applied by the ESP32 on
+  recovery — matching the protocol doc's "simplest first" approach.
+  Current-sense calibration and PWM neutral are both set locally over USB
+  (`CURCAL`, `PWMNEUTRAL`) only — they're board/leg-specific constants the leg
+  owns, not something the ESP32 needs to know or re-apply (the RS485 protocol
+  only ever carries joint angles in degrees, never raw pulse widths), so they
+  deliberately have no RS485 counterpart. See
+  `docs/development/LEG_CALIBRATION.md`.
 - **Uncalibrated-board marker.** The leg address defaults to `0`, which is
   not a valid RS485 address (the protocol uses 1-6) — it means "never
   assigned an address." A board at address 0 blinks its onboard LED red at
@@ -77,6 +81,21 @@ test/
   run over USB, no reboot required.
 - **Interpolation.** LINEAR is the default (easy to verify during bring-up);
   cubic Hermite is enabled via the `INTERP_MODE` parameter.
+- **PWM neutral (center) calibration.** A leg's true physical zero-degree
+  pose isn't always reachable at exactly the default 1500us, since a servo
+  horn can't always be mounted perfectly centered on a given leg's build.
+  `servo_write_angle()`'s angle->pulse mapping is anchored at
+  `pwm_neutral_us` (angle 0 -> that pulse), with independent linear spans out
+  to `pwm_min_us`/`pwm_max_us` on either side, so recalibrating the center
+  doesn't distort the endpoints. Persisted per joint (`PWMNEUTRAL?` /
+  `PWMNEUTRAL <joint 0-2> <us>`, `calib.cpp`), applied live with no reboot;
+  see `tools/leg_configurator.py --mode servo` for the interactive jog +
+  persist + direction-check flow, and `docs/development/LEG_CALIBRATION.md`.
+  Per-joint sign (`invert`, +1/-1) is persisted the same way (`INVERT?` /
+  `INVERT <joint 0-2> <1|-1>`) — the direction-check step now asks what
+  direction each nudge produced and offers to flip and persist it on the
+  spot. Angle range (`angle_min_deg`/`angle_max_deg`) is still compile-time
+  only — see Bring-Up TODO below.
 - **Current smoothing.** `current_sample()` runs at 1 kHz but the ESP32 only
   pulls each leg ~every 10 ms (100 Hz); without smoothing, RS485 telemetry
   would report whichever single 1 kHz sample happened to land at poll time.
@@ -126,8 +145,16 @@ Builds clean; not yet validated on hardware. Known follow-ups:
   readout of all 4 channels (handy for manual wiring/behavior checks), or
   `tools/current_calibration/` for the automated bench workflow using the
   calibration adapter board (`hardware/calboard/`).
-- Servo PWM calibration (angle range, neutral) still uses compile-time
-  defaults (1000/1500/2000 µs); a full USB calibration tool for servo ranges
+- Servo PWM neutral (center) and per-joint sign (`invert`) are now persisted
+  and settable over USB (`PWMNEUTRAL`, `INVERT`, `tools/leg_configurator.py
+  --mode servo` -- also runs a gentle per-joint direction check, offering to
+  flip+persist `invert` right there if the observed direction doesn't match
+  the mainboard IK's convention, and an optional extended range walk).
+  `DEFAULT_PWM_MIN_US`/`MAX_US` were corrected from the generic SG90-style
+  1000/2000us assumption to 500/2500us, this servo's actual rated pulse
+  width (measured on hardware: the old range only reached ~19-51 deg actual
+  for a commanded 60/-90 deg). Angle range (`angle_min_deg`/`angle_max_deg`,
+  still ±90°) remains compile-time only; a full USB calibration tool for that
   is still planned.
 - Cubic interpolation's velocity estimation has untested edge cases (first
   command, post-watchdog restart); prove LINEAR on hardware first.

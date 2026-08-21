@@ -31,9 +31,24 @@ void servo_init(void);
 // Get a pointer to the calibration for a joint (for the calibration interface).
 servo_calib_t *servo_get_calib(int joint);
 
+// Reload this joint's persisted PWM neutral (center) into the live
+// calibration. Call after calib.cpp's PWMNEUTRAL updates it, so the new
+// center takes effect immediately without a reboot.
+void servo_reload_pwm_neutral(int joint);
+
+// Reload this joint's persisted sign inversion into the live calibration.
+// Call after calib.cpp's INVERT updates it, so it takes effect immediately
+// without a reboot.
+void servo_reload_invert(int joint);
+
 // Command a joint to an angle in degrees. Maps through calibration to a pulse
-// width and updates the PWM channel. Returns true if the angle was clamped to
-// the servo's physical range.
+// width and updates the PWM channel. The mapping is anchored at
+// pwm_neutral_us (angle 0 -> pwm_neutral_us), with independent linear spans
+// to pwm_min_us (at angle_min_deg) and pwm_max_us (at angle_max_deg) on
+// either side -- so a leg whose true physical center isn't reachable at the
+// default 1500us can have that center recalibrated (PWMNEUTRAL) without
+// distorting the endpoints. Returns true if the angle was clamped to the
+// servo's physical range.
 bool servo_write_angle(int joint, float angle_deg);
 
 // Command a joint directly to a raw pulse width in microseconds, bypassing

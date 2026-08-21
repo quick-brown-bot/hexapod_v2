@@ -57,6 +57,26 @@ float persist_get_current_ema_alpha(void);
 int   persist_get_current_boxcar_n(void);
 bool  persist_set_current_filter(int mode, float ema_alpha, int boxcar_n);
 
+// Per-joint PWM neutral (center) pulse width in microseconds -- the pulse
+// that a commanded angle of 0 degrees maps to (see servo.cpp). Lets a leg's
+// true physical center be shifted away from DEFAULT_PWM_NEUTRAL_US to
+// compensate for a servo that can't be mounted perfectly centered on this
+// leg's mechanical build. Persisted per joint (JOINT_COXA/FEMUR/TIBIA), set
+// over USB (calib.cpp PWMNEUTRAL / tools/leg_configurator.py --set-neutral).
+int32_t persist_get_pwm_neutral_us(int joint);
+bool    persist_set_pwm_neutral_us(int joint, int32_t pwm_neutral_us);
+
+// Per-joint sign inversion (+1 or -1), applied to the commanded angle before
+// the angle->pulse mapping (see servo.cpp servo_write_angle()). Reconciles
+// this leg's physical mounting/wiring with the mainboard IK's leg-local sign
+// convention (docs/architecture/HARDWARE_AND_MECHANICS.md "Coordinate
+// Conventions", hex_kinematics/leg.c) -- there is no guarantee a given
+// joint's raw "positive PWM direction" already matches what the IK model
+// calls positive for that joint. Defaults to +1 (uninverted). Persisted per
+// joint, set over USB (calib.cpp INVERT / tools/leg_configurator.py).
+int8_t persist_get_invert(int joint);
+bool   persist_set_invert(int joint, int8_t invert);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,16 +1,17 @@
-# LegBoard Configurator (Address + Current-Sense Calibration)
+# LegBoard Configurator (Address + Current-Sense + Servo PWM/Sign Calibration)
 
 ## What this is
 
 An interactive wizard for bringing up one LegBoard: assign its RS485
 address, then guide a resistor-based calibration of its per-servo current
-sense (INA4181 + shunt, one channel per servo). Everything is driven
+sense (INA4181 + shunt, one channel per servo), plus a separate flow to
+recalibrate each servo's true physical center. Everything is driven
 directly over the LegBoard's own USB serial console
 (`firmware/leg/src/calib.cpp`) via
 [`tools/leg_configurator.py`](../../tools/leg_configurator.py) — no separate
 calibration board or RS485 link is needed, since the LegBoard already
 exposes everything required (`ADDR` for identity, `CURRAW?`/`CURCAL` for
-current calibration, `PWM` for a raw servo override) locally.
+current calibration, `PWM`/`PWMNEUTRAL`/`INVERT` for servo PWM) locally.
 
 (An earlier iteration of this tool used a second RS485-master board
 ("s-calib") on a spare LegBoard PCB, for a scenario where the target board
@@ -33,6 +34,25 @@ one RP2040 board is plugged in at once.
 
 (If you don't have `pyserial` in your default Python, run this with
 PlatformIO's bundled interpreter instead — see the script's `--help`.)
+
+## Modes (`--mode`)
+
+The script covers three distinct jobs on one LegBoard; `--mode` picks which
+to run:
+
+| `--mode` | Runs |
+|----------|------|
+| `full` (default) | leg address → current-sense calibration → servo calibration, in sequence |
+| `address` | just the leg address step, nothing else |
+| `current` | current-sense calibration only (sections 3-5 below) |
+| `servo` | servo calibration only: PWM center, direction check, range walk (below) |
+
+`address` skips the board diagram (no wiring involved); `current` and
+`servo` both show it first and confirm/set the address, since either one
+needs you to know which physical connector is which. `--channels
+coxa,femur,tibia` (default: all three) narrows which joints/channels
+`current` and `servo` touch — same names, two different index namespaces
+under the hood (current-sense channel vs. PWM joint).
 
 ## 1. Leg address
 
@@ -57,14 +77,24 @@ hand-drawn approximation of the rendered board
 see `docs/plans/TODO.md` for auto-generating it from the real board render
 as a possible follow-up.
 
-## 3. Zero-load offsets (all 4 channels at once)
+## Current-sense calibration (`--mode current`, and part of `full`)
 
-The wizard asks you to disconnect all three servos, then takes one averaged
-`CURRAW?` reading (5 samples) that covers **total/coxa/femur/tibia in a
-single step** — one poll already reports all 4 channels, so there's no
+Guides a resistor-based calibration of the per-servo current sense (INA4181
++ shunt, one channel per servo plus `total`).
+
+### 3. Zero-load offsets (all 4 channels at once)
+
+The wizard asks you to disconnect all three servos, then Enter takes one
+averaged `CURRAW?` reading (5 samples) that covers **total/coxa/femur/tibia
+in a single step** — one poll already reports all 4 channels, so there's no
 separate "now disconnect for total" pass. Whatever raw mV each channel
 reports at zero load *is* that channel's offset error (true current is 0
 there by definition).
+
+This first prompt also takes **Esc instead of Enter** to skip current-sense
+calibration entirely for this run, leaving whatever is already stored on the
+board untouched — handy if you only came to check/adjust servo centers
+(`--mode servo`) and don't need to redo current calibration.
 
 Offset matters far more than scale for this hardware: the INA4181 gain +
 shunt put scale theoretically at 1.0, and it lands around 0.97-0.99 in
@@ -72,7 +102,7 @@ practice — a small correction — while the offset can meaningfully skew
 low-current readings if left uncorrected. So this single step alone is
 already a reasonable calibration.
 
-## 4. Choose how far to take it
+### 4. Choose how far to take it
 
 After the offsets are measured, the wizard asks:
 
@@ -91,7 +121,7 @@ to use for every channel together with the offsets above:
 - **`y`** — go on to full per-channel resistor calibration (below), reusing
   the zero point already measured instead of re-measuring it per channel.
 
-## 5. Resistor calibration (optional, `y` above)
+### 5. Resistor calibration (optional, `y` above)
 
 For each of coxa/femur/tibia in turn, the wizard attaches a spread of known
 resistor loads and fits a line through the (already-measured) zero point
@@ -157,16 +187,107 @@ through a small THT resistor. Pushing several amps through a resistor tied
 to the servo's 6V rail dissipates tens of watts.
 
 ```bash
-python tools/leg_configurator.py --port COM10                     # all three channels
-python tools/leg_configurator.py --port COM10 --channels coxa     # just one
+python tools/leg_configurator.py --mode current --port COM10                     # all three channels
+python tools/leg_configurator.py --mode current --port COM10 --channels coxa     # just one
 ```
+
+## Servo calibration (`--mode servo`, and part of `full`)
+
+Recalibrates each servo's true physical center, checks that it moves the
+right direction, and optionally walks its full safe range — all on an
+assembled leg, driven purely over USB with the leg's own console (no RS485,
+no mainboard needed). For each selected joint, in turn:
+
+### 6. Center
+
+A leg's true physical zero-degree pose isn't always reachable at exactly
+1500 µs — a servo horn can't always be mounted perfectly centered on a given
+leg's mechanical build, especially the femur/tibia links where a single
+spline tooth of offset can be the difference between "close enough" and
+visibly off. The wizard puts the joint into a live jog: the pulse width and
+key legend redraw on one line as you go, and the leg moves in real time --
+
+- **↑ / ↓** — fine adjust, ±5 µs (`JOG_STEP_FINE_US`)
+- **← / →** — coarse adjust, ±25 µs (`JOG_STEP_COARSE_US`)
+- **Enter** — accept the current value and persist it as the new center via
+  `PWMNEUTRAL <joint> <us>`
+- **Esc** — cancel, restoring whatever pulse width the joint had before you
+  started jogging it (nothing persisted)
+
+(Piped/non-interactive stdin, where arrow keys aren't available, falls back
+to typing an exact pulse width plus Enter.)
+
+Unlike a raw `PWM` override, accepting a new center **is** persisted (flash,
+survives reboot) and takes effect immediately for normal operation too:
+`servo_write_angle()` (used for every RS485-driven and interpolated move) is
+anchored at the calibrated neutral, with independent linear spans out to the
+(still compile-time) min/max pulse on either side — so recalibrating the
+center shifts where a commanded angle of 0° physically lands without
+distorting the endpoints.
+
+### 7. Gentle direction check
+
+Immediately after centering that joint, the wizard nudges it a small amount
+(`--step` µs, default 100) to each side of the just-set center, one move at
+a time — Enter to continue, `q` to quit — so you can watch which physical
+direction each move produces before anything bigger happens. Current is
+sampled at every step against a just-measured neutral baseline and flagged
+if it jumps well above it (informational only — a heads-up to look closer,
+not a hard cutoff, since the board may not be current-calibrated yet).
+
+After both nudges it asks what direction you saw, and prints the direction a
+*positive* commanded angle is supposed to produce per the mainboard IK's
+leg-local convention — see
+[`HARDWARE_AND_MECHANICS.md` "Joint Angle Sign Convention"](../architecture/HARDWARE_AND_MECHANICS.md#joint-angle-sign-convention)
+— for femur and tibia (coxa's expected yaw direction depends on this leg's
+mount rotation, which the wizard has no access to, so there's no universal
+answer to print there). If what you saw doesn't match, it offers to flip and
+persist that joint's sign (`INVERT <joint> <1|-1>`) right there and re-runs
+the nudge so you can confirm the fix immediately, rather than discovering an
+inverted joint later during an IK/gait test.
+
+### 8. Extended range walk (optional)
+
+After all selected joints' gentle checks, the wizard asks once whether to
+also walk each joint toward its min/max pulse width in the same small
+increments — still step-confirmed and current-monitored — to find the safe
+usable range without jamming anything (leg geometry can make the real usable
+range narrower than the servo's own 500-2500 µs).
+
+All joints return to their (possibly just-recalibrated) center at the end,
+or immediately if you quit early with `q`.
+
+```bash
+python tools/leg_configurator.py --mode servo --port COM10                  # all three joints
+python tools/leg_configurator.py --mode servo --port COM10 --channels femur # just one
+python tools/leg_configurator.py --mode servo --port COM10 --step 150       # bigger nudge
+```
+
+Query the current persisted centers and signs directly over the console at
+any time:
+
+```
+PWMNEUTRAL?
+J0 coxa neutral_us=1500
+J1 femur neutral_us=1460
+J2 tibia neutral_us=1500
+
+INVERT?
+J0 coxa invert=1
+J1 femur invert=-1
+J2 tibia invert=-1
+```
+
+Angle range (`angle_min_deg`/`angle_max_deg`) is not yet calibratable this
+way — still a compile-time default (±90°), see `firmware/leg/README.md`
+"Bring-Up Status/TODO".
 
 ## Zero-position build aid
 
-`--zero` runs the address step and board diagram, then centers all three
-servos to the firmware's neutral pulse width (1500 µs,
-`DEFAULT_PWM_NEUTRAL_US`) via the existing `PWM <joint> <us>` raw override
-command instead of running current calibration, so the leg can be physically
+`--zero` (independent of `--mode`) centers all three servos to each joint's
+*calibrated* PWM neutral (`PWMNEUTRAL?`, previous section — 1500 µs /
+`DEFAULT_PWM_NEUTRAL_US` until recalibrated) via the raw `PWM <joint> <us>`
+override, without running any calibration, so the leg can be physically
 assembled against a fixed mechanical reference:
 
 ```bash
@@ -175,6 +296,8 @@ python tools/leg_configurator.py --port COM10 --zero
 
 This is a raw override, not persisted — it releases as soon as the board
 gets a real target (e.g. once it's wired to the mainboard) or power-cycles.
+(The PWM neutral it centers to, unlike this override itself, *is*
+persisted.)
 
 ## Hardware current range
 

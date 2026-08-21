@@ -228,6 +228,53 @@ Unchanged from V1.
 The exact per-leg mount poses are part of the robot configuration domain and
 are consumed by the motion stack at runtime.
 
+## Joint Angle Sign Convention
+
+The conventions above describe the *input* to `leg_ik_solve()`
+(`hex_kinematics/leg.c`) — the Cartesian foot target. The *output* joint
+angles (coxa/femur/tibia, `leg_angles_t`) have their own sign convention,
+which isn't stated anywhere as prose — it falls out of the IK formula itself,
+and only tibia has an inline code comment. Derived and confirmed on real
+hardware during leg 1 bring-up (2026-08-21):
+
+- **Coxa** (hip yaw): positive angle is a counter-clockwise rotation about
+  `+Z`, viewed from above — i.e. from "straight out" (`+X`) toward "forward"
+  (`+Y`), per the right-hand rule on the right-handed leg-local frame above.
+  This is a geometric property of the frame itself, universal across all six
+  legs; what it means in body-frame terms ("right" vs "left") depends on each
+  leg's mount rotation, so there's no single answer like "positive = right"
+  that holds for every leg (it happened to hold for leg 1's particular mount
+  orientation).
+- **Femur** (hip pitch): positive angle raises the foot (`+Z`, up). Not
+  stated in a code comment — derived numerically from `leg_ik_solve()`'s
+  formula: at the nominal link lengths above, a foot target 2 cm higher (same
+  horizontal reach) computes roughly a **+10°** femur delta.
+- **Tibia** (knee): positive angle lowers the foot (`-Z`, down) — explicit in
+  `leg_ik_solve()`'s comment ("increasing angle corresponds to bending the
+  leg downward... foot lowers"), and confirmed by the same numeric check: a
+  foot target 2 cm lower computes roughly a **+6°** tibia delta.
+
+**This is the IK model's convention — it is not automatically what a given
+servo does when commanded that same signed angle.** Nothing about a leg's
+physical assembly (which way a horn is splined on, which way a servo is
+mounted) guarantees its raw wire-level positive direction already matches
+this model. Each LegBoard applies its own per-joint `invert` (`+1`/`-1`,
+`firmware/leg/src/servo.cpp`, persisted per joint — see
+[`LEG_CALIBRATION.md`](../development/LEG_CALIBRATION.md) "Gentle direction
+check") specifically to reconcile the two. On leg 1, coxa's raw sign already
+matched this convention (positive = right, for that leg's mount
+orientation), but femur and tibia were both found inverted relative to it
+and corrected via `INVERT`.
+
+Since `hex_actuation`'s `robot_execute()` sends whichever angles
+`whole_body_control_compute()` (IK) or an RPC `joint` override produces
+straight to `rs485_master_set_leg_angles()` with no sign massaging in
+between, a leg's `invert` calibration is what makes a raw wire-level test
+(e.g. the mainboard RPC `joint <leg> <coxa> <femur> <tibia>` command,
+`tools/joint_direction_test.py`) agree with what the gait/IK stack expects —
+run that test *after* `invert` is calibrated, not before, or the directions
+you observe will describe the servo wiring, not the IK model.
+
 ---
 
 ## Why This Matters For Firmware
