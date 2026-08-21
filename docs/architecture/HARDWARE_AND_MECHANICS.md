@@ -204,12 +204,13 @@ standardised servo dimensions and the target stance geometry.
 
 ## Nominal Link Geometry
 
-Unchanged from V1.
+Coxa and tibia unchanged from V1. Femur corrected to this hexapod version's
+actual length (was 0.088 m).
 
 | Link | Length |
 |------|--------|
 | Coxa | 0.068 m |
-| Femur | 0.088 m |
+| Femur | 0.080 m |
 | Tibia | 0.127 m |
 
 These dimensions define the nominal leg model used by inverse kinematics and

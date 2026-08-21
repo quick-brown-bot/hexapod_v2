@@ -15,7 +15,7 @@ extern "C" {
 // Example usage
 // leg_geometry_t cfg = {
 //     .len_coxa = 0.068f,
-//     .len_femur = 0.088f,
+//     .len_femur = 0.080f,
 //     .len_tibia = 0.1270f,
 //     .coxa_offset_rad = 4*-0.017453292519943295f,
 //     .femur_offset_rad = 0.5396943301595464f,

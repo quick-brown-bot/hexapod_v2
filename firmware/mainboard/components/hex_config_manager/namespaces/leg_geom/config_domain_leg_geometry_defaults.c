@@ -11,7 +11,7 @@ void config_load_leg_geometry_defaults(leg_geometry_config_t* config) {
     memset(config, 0, sizeof(leg_geometry_config_t));
 
     const float default_len_coxa = 0.068f;
-    const float default_len_femur = 0.088f;
+    const float default_len_femur = 0.080f; // this hexapod version's actual femur length
     const float default_len_tibia = 0.127f;
 
     const float x_off_front = 0.08f;
