@@ -12,6 +12,9 @@
  *   list namespaces | list <ns>
  *   joint <leg 1-6> <coxa_deg> <femur_deg> <tibia_deg>  -- direct per-leg joint override
  *   joint <leg 1-6> release                             -- hand the leg back to gait/IK
+ *   ik <leg 1-6> <x_m> <y_m> <z_m>  -- leg-local Cartesian foot target -> IK -> per-leg
+ *                                       joint override (same override as `joint`, so
+ *                                       `joint <leg> release` also releases an `ik` set leg)
  */
 
 #include "rpc_commands.h"
@@ -30,6 +33,10 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <ctype.h>
+#include <math.h>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 static const char *TAG = "rpc"; // used for logging
 
@@ -136,18 +143,26 @@ static int tokenize(char *line, char *argv[], int max_args) {
 }
 
 static void cmd_help(void) {
-	rpc_send("Commands: get set setpersist export factory-reset save list help version joint");
+	rpc_send("Commands: get set setpersist export factory-reset save list help version joint ik");
 }
 
-// Hard safety bound for direct joint overrides, independent of the (currently
-// uncalibrated) joint_cal min/max -- see docs/development/LEG_CALIBRATION.md.
-// The LegBoard applies its own compile-time PWM range clamp underneath this too.
-#define RPC_JOINT_OVERRIDE_LIMIT_DEG 60.0f
-
-static float clamp_joint_override_deg(float deg) {
-    if (deg > RPC_JOINT_OVERRIDE_LIMIT_DEG) return RPC_JOINT_OVERRIDE_LIMIT_DEG;
-    if (deg < -RPC_JOINT_OVERRIDE_LIMIT_DEG) return -RPC_JOINT_OVERRIDE_LIMIT_DEG;
-    return deg;
+// Clamps a commanded joint angle (degrees) to this leg/joint's namespace-backed
+// range -- config_manager's "joint_cal" min_rad/max_rad, the single source of
+// truth for joint limits (see docs/architecture/HARDWARE_AND_MECHANICS.md
+// "Joint Angle Sign Convention"), not a locally-invented safety constant. The
+// LegBoard applies its own compile-time PWM range clamp underneath this too.
+// Returns false if that config isn't available (out-of-range leg/joint --
+// config_manager already fails boot loudly if the namespace itself is
+// missing), so callers fail the command instead of guessing a range.
+static bool clamp_to_joint_cal_deg(int leg, leg_servo_t joint, float deg, float *out_deg) {
+    const joint_calib_t *calib = robot_config_get_joint_calib(leg, joint);
+    if (!calib) return false;
+    float min_deg = calib->min_rad * (180.0f / (float)M_PI);
+    float max_deg = calib->max_rad * (180.0f / (float)M_PI);
+    if (deg > max_deg) deg = max_deg;
+    if (deg < min_deg) deg = min_deg;
+    *out_deg = deg;
+    return true;
 }
 
 static void cmd_joint(int argc, char *argv[]) {
@@ -172,11 +187,58 @@ static void cmd_joint(int argc, char *argv[]) {
         rpc_send("usage: joint <leg 1-6> <coxa_deg> <femur_deg> <tibia_deg> | joint <leg> release");
         return;
     }
-    float coxa  = clamp_joint_override_deg(strtof(argv[2], NULL));
-    float femur = clamp_joint_override_deg(strtof(argv[3], NULL));
-    float tibia = clamp_joint_override_deg(strtof(argv[4], NULL));
+    float coxa, femur, tibia;
+    if (!clamp_to_joint_cal_deg(leg, LEG_SERVO_COXA, strtof(argv[2], NULL), &coxa) ||
+        !clamp_to_joint_cal_deg(leg, LEG_SERVO_FEMUR, strtof(argv[3], NULL), &femur) ||
+        !clamp_to_joint_cal_deg(leg, LEG_SERVO_TIBIA, strtof(argv[4], NULL), &tibia)) {
+        rpc_send("joint %d: joint_cal unavailable for this leg", leg_1based);
+        return;
+    }
     robot_set_leg_joint_override_deg(leg, coxa, femur, tibia);
     rpc_send("joint %d: coxa=%.1f femur=%.1f tibia=%.1f", leg_1based, coxa, femur, tibia);
+}
+
+static inline float rad_to_deg_rpc(float rad) { return rad * (180.0f / (float)M_PI); }
+
+static void cmd_ik(int argc, char *argv[]) {
+    if (argc < 5) {
+        rpc_send("usage: ik <leg 1-6> <x_m> <y_m> <z_m>  (leg-local: X out, Y forward, Z up)");
+        return;
+    }
+    int leg_1based = (int)strtol(argv[1], NULL, 10);
+    int leg = leg_1based - 1;
+    if (leg < 0 || leg >= NUM_LEGS) {
+        rpc_send("ik: leg out of range (1-%d)", NUM_LEGS);
+        return;
+    }
+
+    leg_handle_t handle = robot_config_get_leg(leg);
+    if (!handle) {
+        rpc_send("ik: leg %d has no configured IK handle", leg_1based);
+        return;
+    }
+
+    float x = strtof(argv[2], NULL);
+    float y = strtof(argv[3], NULL);
+    float z = strtof(argv[4], NULL);
+
+    leg_angles_t angles;
+    esp_err_t err = leg_ik_solve(handle, x, y, z, &angles);
+    if (err != ESP_OK) {
+        rpc_send("ik: leg_ik_solve failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    float coxa_deg, femur_deg, tibia_deg;
+    if (!clamp_to_joint_cal_deg(leg, LEG_SERVO_COXA, rad_to_deg_rpc(angles.coxa), &coxa_deg) ||
+        !clamp_to_joint_cal_deg(leg, LEG_SERVO_FEMUR, rad_to_deg_rpc(angles.femur), &femur_deg) ||
+        !clamp_to_joint_cal_deg(leg, LEG_SERVO_TIBIA, rad_to_deg_rpc(angles.tibia), &tibia_deg)) {
+        rpc_send("ik %d: joint_cal unavailable for this leg", leg_1based);
+        return;
+    }
+    robot_set_leg_joint_override_deg(leg, coxa_deg, femur_deg, tibia_deg);
+    rpc_send("ik %d: target=(%.3f,%.3f,%.3f) -> coxa=%.1f femur=%.1f tibia=%.1f",
+              leg_1based, x, y, z, coxa_deg, femur_deg, tibia_deg);
 }
 
 static void cmd_version(void) {
@@ -377,6 +439,7 @@ static void rpc_execute_line(char *line) {
 	else if (strcmp(argv[0], "save")==0) { cmd_save(argc, argv); }
 	else if (strcmp(argv[0], "factory-reset")==0) { cmd_factory_reset(); }
 	else if (strcmp(argv[0], "joint")==0) { cmd_joint(argc, argv); }
+	else if (strcmp(argv[0], "ik")==0) { cmd_ik(argc, argv); }
 	else { rpc_send("unknown: %s", argv[0]); }
 }
 
