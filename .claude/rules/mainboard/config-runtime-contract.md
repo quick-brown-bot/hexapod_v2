@@ -1,9 +1,12 @@
 ---
-name: "Config Runtime Contract"
-description: "Use when adding, refactoring, or consuming runtime-tunable configuration in components or main startup code. Enforces namespace-backed configuration, single-source defaults, no hidden local fallback defaults, loud failure on missing required config, hex_config_manager ownership of persistence/migration/validation, consumer-side validation before use, shared config contracts, transport-agnostic runtime models, and compatible namespace schema evolution."
-applyTo: "components/**, main/**"
+paths:
+  - "firmware/mainboard/components/**"
+  - "firmware/mainboard/main/**"
 ---
+
 # Config Runtime Contract
+
+Applies when adding, refactoring, or consuming runtime-tunable configuration under `firmware/mainboard/components/` or `firmware/mainboard/main/`. Enforces namespace-backed configuration, single-source defaults, no hidden local fallback defaults, loud failure on missing required config, `hex_config_manager` ownership of persistence/migration/validation, consumer-side validation before use, shared config contracts, transport-agnostic runtime models, and compatible namespace schema evolution.
 
 Use these rules whenever a value can be tuned at runtime, persisted, or loaded from configuration.
 

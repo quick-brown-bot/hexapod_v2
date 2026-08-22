@@ -79,8 +79,9 @@ touching either, since firmware pin assignments must match the schematic.
 
 Full agent-facing conventions (component README requirements, config
 contract, testing principles) already live in `firmware/mainboard/AGENTS.md`
-and `firmware/mainboard/.github/instructions/` — read those before editing
-mainboard components, this file intentionally doesn't restate them.
+(auto-loaded via `firmware/mainboard/CLAUDE.md`) and the path-scoped rules
+under `.claude/rules/mainboard/` — read those before editing mainboard
+components, this file intentionally doesn't restate them.
 
 ## Firmware architecture (leg, RP2040/PlatformIO)
 

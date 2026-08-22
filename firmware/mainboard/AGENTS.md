@@ -45,19 +45,22 @@ Test environment notes:
 - Required config should fail fast when missing, unloaded, or invalid.
 - Keep persistence/migration/validation ownership in `hex_config_manager`, not in consuming components.
 
-For full rules, follow [config-runtime-contract.instructions.md](.github/instructions/config-runtime-contract.instructions.md).
+For full rules, follow [config-runtime-contract.md](../../.claude/rules/mainboard/config-runtime-contract.md).
 
-## Use these instructions
+## Use these rules
 
-- Components: [component-readme-requirements.instructions.md](.github/instructions/component-readme-requirements.instructions.md)
-- Runtime config contract: [config-runtime-contract.instructions.md](.github/instructions/config-runtime-contract.instructions.md)
-- Documentation structure: [documentation-structure-and-readme-philosophy.instructions.md](.github/instructions/documentation-structure-and-readme-philosophy.instructions.md)
-- Python integration tests: [integration-testing-principles.instructions.md](.github/instructions/integration-testing-principles.instructions.md)
+Path-scoped rules under `.claude/rules/` load automatically when Claude reads a matching file; the docs philosophy rule also applies repo-wide.
+
+- Components: [component-readme-requirements.md](../../.claude/rules/mainboard/component-readme-requirements.md)
+- Runtime config contract: [config-runtime-contract.md](../../.claude/rules/mainboard/config-runtime-contract.md)
+- Documentation structure (repo-wide): [documentation-structure-and-readme-philosophy.md](../../.claude/rules/documentation-structure-and-readme-philosophy.md)
+- Python integration tests: [integration-testing-principles.md](../../.claude/rules/mainboard/integration-testing-principles.md)
 
 ## Use these skills
 
-- Namespace checklist: [config-manager-namespace-checklist](.github/skills/config-manager-namespace-checklist/SKILL.md)
-- Live namespace pytest workflow: [config-manager-pytest-integration-tests](.github/skills/config-manager-pytest-integration-tests/SKILL.md)
+- Namespace checklist: [config-manager-namespace-checklist](.claude/skills/config-manager-namespace-checklist/SKILL.md)
+- Live namespace pytest workflow: [config-manager-pytest-integration-tests](.claude/skills/config-manager-pytest-integration-tests/SKILL.md)
+- ESP-IDF test layer selection (Unity vs pytest-embedded): [esp-idf-testing-strategy agent](../../.claude/agents/esp-idf-testing-strategy.md)
 
 ## Component map
 

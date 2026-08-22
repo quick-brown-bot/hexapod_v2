@@ -1,12 +1,12 @@
 ---
-name: "Integration Testing Principles"
-description: "Use when writing or refactoring Python integration tests, RPC tests, transport-level tests, or shared pytest fixtures. Enforces externally visible interfaces, deterministic behavior, fixture-based bootstrap, configuration cleanup, and parameterized coverage."
-applyTo:
-  - "test/**/*.py"
-  - "pytest_*.py"
+paths:
+  - "firmware/mainboard/test/**/*.py"
+  - "firmware/mainboard/pytest_*.py"
 ---
 
 # Integration Testing Principles
+
+Applies when writing or refactoring Python integration tests, RPC tests, transport-level tests, or shared pytest fixtures under `firmware/mainboard/`. Enforces externally visible interfaces, deterministic behavior, fixture-based bootstrap, configuration cleanup, and parameterized coverage.
 
 - Prefer externally visible interfaces over direct internal access. Drive behavior through RPC commands, network transports, or other public integration surfaces instead of reaching into implementation details.
 - Keep integration tests deterministic and repeatable. Use explicit inputs, bounded timeouts, stable assertions, and clear skip conditions for missing external prerequisites.

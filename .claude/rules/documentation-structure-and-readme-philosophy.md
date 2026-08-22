@@ -1,9 +1,12 @@
 ---
-description: "Use when writing or restructuring README.md files and monorepo docs files under ../../docs/*.md, including architecture docs, hardware docs, or documentation indexes. Covers documentation layering, README scope, and separation of current reference docs from plans/history."
-name: "Documentation Structure And README Philosophy"
-applyTo: "README.md, ../../docs/**/*.md"
+paths:
+  - "README.md"
+  - "docs/**/*.md"
 ---
+
 # Documentation Structure And README Philosophy
+
+Applies when writing or restructuring README.md files and monorepo docs under `docs/**`, including architecture docs, hardware docs, or documentation indexes. Covers documentation layering, README scope, and separation of current reference docs from plans/history.
 
 - Treat documentation as layered, not flat.
 - Keep the root README.md inviting and technically communicative, but not deep enough to become the full architecture reference.
@@ -26,7 +29,7 @@ applyTo: "README.md, ../../docs/**/*.md"
 - Prefer stable categories such as architecture, configuration, interfaces, plans, and archive when that split fits the repository.
 - Keep current reference documentation separate from forward-looking plans and historical refactor notes.
 - If hardware or mechanics are important to understanding the firmware, give them a dedicated documentation home instead of burying them in unrelated docs.
-- Use ../../docs/README.md as the documentation map and reading guide.
+- Use `docs/README.md` as the documentation map and reading guide.
 
 ## Architecture Documentation
 
