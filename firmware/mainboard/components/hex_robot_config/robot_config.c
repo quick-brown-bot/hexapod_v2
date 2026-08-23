@@ -4,7 +4,11 @@
 #include "config_ns_leg_geometry_api.h"
 #include "namespaces/servo_map/config_ns_servo_map_api.h"
 #include <string.h>
+#include <math.h>
 #include "esp_log.h"
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // Single static instance for now. In the future, load/save to NVS.
 static robot_config_t g_cfg;
@@ -19,11 +23,17 @@ static const char* TAG = "robot_config";
 esp_err_t robot_config_init_default(void) {
     memset(&g_cfg, 0, sizeof(g_cfg));
 
-    // These offsets are kinematic-model constants used by leg_configure.
-    // Lengths/mount/stance must come from the leg geometry namespace.
-    const float coxa_offset_rad = 0.0f;
-    const float femur_offset_rad = 0.5396943301595464f;
-    const float tibia_offset_rad = 1.0160719600939494f;
+    // Tibia zero-reference offset -- kinematic-model constant used by
+    // leg_configure. Coxa and femur need no such offset (see leg_ik_solve());
+    // lengths/mount/stance must come from the leg geometry namespace. Was
+    // 1.0160719600939494f (empirically tuned for a since-rewritten formula --
+    // see docs/architecture/HARDWARE_AND_MECHANICS.md "Joint Angle Sign
+    // Convention"). pi/2 confirmed correct on real hardware: this leg's
+    // physical zero (all servos at their calibrated PWM neutral) is femur and
+    // tibia in one plane, foot directly below the knee joint -- a right angle
+    // at the knee, which is exactly knee_angle=pi/2 in leg_ik_solve()'s law-
+    // of-cosines output for any link lengths.
+    const float tibia_offset_rad = (float)M_PI * 0.5f;
 
     config_manager_state_t cfg_state = {0};
 
@@ -74,8 +84,6 @@ esp_err_t robot_config_init_default(void) {
             .len_coxa = stored_geom->len_coxa[i],
             .len_femur = stored_geom->len_femur[i],
             .len_tibia = stored_geom->len_tibia[i],
-            .coxa_offset_rad = coxa_offset_rad,
-            .femur_offset_rad = femur_offset_rad,
             .tibia_offset_rad = tibia_offset_rad,
         };
         (void)leg_configure(&leg_geom, &g_cfg.legs[i]);

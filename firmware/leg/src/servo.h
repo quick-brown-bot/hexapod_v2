@@ -42,12 +42,14 @@ void servo_reload_pwm_neutral(int joint);
 void servo_reload_invert(int joint);
 
 // Command a joint to an angle in degrees. Maps through calibration to a pulse
-// width and updates the PWM channel. The mapping is anchored at
-// pwm_neutral_us (angle 0 -> pwm_neutral_us), with independent linear spans
-// to pwm_min_us (at angle_min_deg) and pwm_max_us (at angle_max_deg) on
-// either side -- so a leg whose true physical center isn't reachable at the
-// default 1500us can have that center recalibrated (PWMNEUTRAL) without
-// distorting the endpoints. Returns true if the angle was clamped to the
+// width and updates the PWM channel. The mapping is a single uniform rate
+// ((pwm_max_us - pwm_min_us) / (angle_max_deg - angle_min_deg)) anchored at
+// pwm_neutral_us (angle 0 -> pwm_neutral_us) -- pwm_neutral_us relocates
+// where zero degrees lands (correcting a leg's mechanical/mounting offset
+// from the default 1500us) without changing the slope, matching a typical
+// analog servo's uniform pulse-to-angle response. An off-center neutral
+// therefore makes the reachable range slightly asymmetric near the ends
+// (clamped, not distorted). Returns true if the angle was clamped to the
 // servo's physical range.
 bool servo_write_angle(int joint, float angle_deg);
 

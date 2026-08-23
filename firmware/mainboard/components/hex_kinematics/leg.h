@@ -17,9 +17,7 @@ extern "C" {
 //     .len_coxa = 0.068f,
 //     .len_femur = 0.080f,
 //     .len_tibia = 0.1270f,
-//     .coxa_offset_rad = 4*-0.017453292519943295f,
-//     .femur_offset_rad = 0.5396943301595464f,
-//     .tibia_offset_rad = 1.0160719600939494f,
+//     .tibia_offset_rad = (float)M_PI * 0.5f,
 // };
 
 
@@ -44,9 +42,13 @@ typedef struct {
 	float len_femur;  // thigh length
 	float len_tibia;  // shank length
 
-	// Servo calibration offsets (radians)
-	float coxa_offset_rad;
-	float femur_offset_rad;
+	// Tibia zero-reference offset (radians). Coxa and femur need no such
+	// offset -- both are exactly zero for any link lengths at the neutral
+	// pose (femur horizontal, tibia straight down, foot under the knee
+	// joint); see docs/architecture/HARDWARE_AND_MECHANICS.md "Joint Angle
+	// Sign Convention". pi/2 confirmed correct on real hardware: that pose
+	// (a right angle at the knee) is exactly knee_angle=pi/2 for any link
+	// lengths.
 	float tibia_offset_rad;
 } leg_geometry_t;
 
@@ -64,9 +66,9 @@ typedef struct {
 } leg_angles_t;
 
 // Inverse kinematics: compute joint angles for a foot target in leg-local coordinates.
-// Coordinate frame:
+// Coordinate frame (right-handed):
 //  - XY plane is the ground plane
-//  - Z axis points downward (increases toward ground)
+//  - Z axis points up
 //  - X points outward from the robot body (to the side)
 //  - Y points forward
 // Units for x/y/z should match the leg lengths provided in leg_geometry_t.

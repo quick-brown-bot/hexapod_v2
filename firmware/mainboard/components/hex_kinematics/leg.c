@@ -47,11 +47,11 @@ esp_err_t leg_ik_solve(leg_handle_t handle, float x, float y, float z, leg_angle
     if (!handle || !out_angles) return ESP_ERR_INVALID_ARG;
     leg_geometry_t* leg = handle;
 
-    // Coxa yaw in XY plane (unchanged by Z convention change)
+    // Coxa yaw in XY plane. No offset needed: yaw=0 already means "straight
+    // out along +X" for any leg, which is the natural, unambiguous zero.
     float yaw = normalize_angle(atan2f(y, x));
     float r_xy = sqrtf(x * x + y * y);
-    yaw += leg->coxa_offset_rad;
-    ESP_LOGD(TAG, "IK(Zup): r_xy=%.3f, yaw=%.3f deg off=%.3f deg", r_xy, yaw * (180.0f / M_PI), leg->coxa_offset_rad * (180.0f / M_PI));
+    ESP_LOGD(TAG, "IK(Zup): r_xy=%.3f, yaw=%.3f deg", r_xy, yaw * (180.0f / M_PI));
 
     // Project to sagittal plane after removing coxa length along X (outward)
     float px = r_xy - leg->len_coxa;   // horizontal distance from femur joint
@@ -63,23 +63,32 @@ esp_err_t leg_ik_solve(leg_handle_t handle, float x, float y, float z, leg_angle
     float d = clampf(hypotf(px, pz), fabsf(L1 - L2), L1 + L2);
     ESP_LOGD(TAG, "IK(Zup): px=%.3f pz=%.3f d=%.3f", px, pz, d);
 
-    // Knee (tibia) via law of cosines: interior angle at the knee between femur and tibia
+    // Knee (tibia) via law of cosines: interior angle at the knee between femur
+    // and tibia. 0 when fully folded (femur and tibia doubled back onto each
+    // other), pi (180 deg) when fully extended (straight leg).
     float cosK = (L1*L1 + L2*L2 - d*d) / (2.0f * L1 * L2);
     cosK = clampf(cosK, -1.0f, 1.0f);
-    float knee_angle = acosf(cosK); // 0 when fully extended, increases when folding
-    // Define tibia joint angle so that increasing angle corresponds to bending (flexing) the leg downward (foot lowers) in Z-up space.
+    float knee_angle = acosf(cosK);
+    // tibia_offset_rad shifts this to whatever this leg's build calls zero --
+    // e.g. pi/2 for "tibia straight down from the knee, foot under the knee
+    // joint" (a right angle at the knee is the geometric definition of that
+    // pose, for any link lengths). See docs/architecture/HARDWARE_AND_MECHANICS.md
+    // "Joint Angle Sign Convention". Increasing tibia bends the leg downward
+    // (foot lowers) in this Z-up space.
     float tibia = knee_angle - leg->tibia_offset_rad;
     ESP_LOGD(TAG, "IK(Zup): cosK=%.3f knee=%.3f deg tibia=%.3f deg", cosK, knee_angle * (180.0f / M_PI), tibia * (180.0f / M_PI));
 
-    // Femur (hip pitch). Compute angle from horizontal using geometry.
-    // Using Z up: atan2f(pz, px) gives angle above horizontal. Need to subtract internal triangle angle.
+    // Femur (hip pitch): angle of the hip-to-target line above horizontal
+    // (base), plus the interior hip angle between the femur link and that
+    // line (phi). No offset needed: at the neutral pose (femur horizontal,
+    // tibia straight down, foot under the knee) base and phi are equal
+    // magnitude and opposite sign for any link lengths, so they cancel to
+    // exactly zero -- confirmed both algebraically and on real hardware.
     float cosPhi = (L1*L1 + d*d - L2*L2) / (2.0f * L1 * d);
     cosPhi = clampf(cosPhi, -1.0f, 1.0f);
     float phi = acosf(cosPhi); // interior angle at hip between femur and line to foot
     float base = atan2f(pz, px); // angle of foot line above horizontal
-    // femur joint angle: bring femur toward target line then subtract offset
-    // float femur = base + phi - (float)M_PI * 0.5f - leg->femur_offset_rad;
-    float femur = base + phi - leg->femur_offset_rad;
+    float femur = base + phi;
     ESP_LOGD(TAG, "IK(Zup): cosPhi=%.3f phi=%.3f deg base=%.3f deg femur=%.3f deg", cosPhi, phi * (180.0f / M_PI), base * (180.0f / M_PI), femur * (180.0f / M_PI));
 
     out_angles->coxa = yaw;

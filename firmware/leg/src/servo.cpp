@@ -69,21 +69,24 @@ bool servo_write_angle(int joint, float angle_deg)
     float clamped = clampf(a, c->angle_min_deg, c->angle_max_deg);
     bool was_clamped = (clamped != a);
 
-    // Two-segment mapping anchored at pwm_neutral_us (angle 0), rather than a
-    // single line across [angle_min,angle_max]->[pwm_min,pwm_max] -- lets a
-    // leg's true physical center be recalibrated (PWMNEUTRAL) independently
-    // of the endpoint pulses. Degenerate ranges that don't straddle 0 just
-    // fall back to the neutral pulse for that side.
-    int32_t pulse;
-    if (clamped >= 0.0f) {
-        float span = c->angle_max_deg;
-        float t = (span > 0.0f) ? (clamped / span) : 0.0f;
-        pulse = c->pwm_neutral_us + (int32_t)(t * (float)(c->pwm_max_us - c->pwm_neutral_us));
-    } else {
-        float span = -c->angle_min_deg;
-        float t = (span > 0.0f) ? (-clamped / span) : 0.0f;
-        pulse = c->pwm_neutral_us - (int32_t)(t * (float)(c->pwm_neutral_us - c->pwm_min_us));
-    }
+    // Uniform rate across the whole calibrated pulse range, anchored at
+    // pwm_neutral_us (angle 0). pwm_neutral_us shifts *where zero degrees
+    // lands* -- correcting this leg's mechanical/mounting offset -- it does
+    // not change the slope. The previous two-segment mapping instead
+    // recomputed a separate rate on each side of neutral by dividing by a
+    // fixed 90 deg, which silently assumed the servo's real response is
+    // asymmetric around whatever pulse its calibrated center happens to
+    // land on -- wrong for a typical analog servo, whose pulse-to-angle
+    // response is uniform across its full rated range regardless of where
+    // manufacturing tolerance puts that center. A consequence: with an
+    // off-center neutral, the reachable range is now honestly slightly
+    // asymmetric (clamped below) rather than silently compressed on the
+    // tight side to fake a full angle_min..angle_max sweep on both sides.
+    float total_span_deg = c->angle_max_deg - c->angle_min_deg; // typically 180
+    float us_per_deg = (total_span_deg > 0.0f)
+        ? (float)(c->pwm_max_us - c->pwm_min_us) / total_span_deg
+        : 0.0f;
+    int32_t pulse = c->pwm_neutral_us + (int32_t)(clamped * us_per_deg);
 
     if (pulse < c->pwm_min_us) pulse = c->pwm_min_us;
     if (pulse > c->pwm_max_us) pulse = c->pwm_max_us;
