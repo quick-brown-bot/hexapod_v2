@@ -199,7 +199,7 @@ static void poll_leg(int idx)
     char line[RS485_LINE_MAX];
     int llen = read_line(line, sizeof(line), RS485_RESPONSE_TIMEOUT_MS);
 
-    leg_telemetry_t t;
+    leg_telemetry_t t = {0};
     bool ok = (llen > 0) && parse_response(idx, line, &t);
 
     xSemaphoreTake(s_lock, portMAX_DELAY);

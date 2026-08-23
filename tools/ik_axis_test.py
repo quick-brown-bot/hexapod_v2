@@ -20,12 +20,24 @@ point). In the xy plane, every point other than the +-X extremes requires
 coxa, femur, *and* tibia together, so it's a clearer multi-joint coupling
 demonstration than a single Y sweep.
 
-Both modes move at constant speed along a fixed-size step (--resolution,
+--mode figure8: sweeps a figure-8 (lemniscate of Gerono) in the chosen plane,
+centered on --center, using the same go-to-center/confirm/sweep/hold protocol
+as circle mode. --radius is half the figure's height: the two lobes span
++-radius along the plane's first-named axis (e.g. X for "xy"/"xz") and
++-radius/2 along the second (e.g. Y for "xy", Z for "xz").
+
+All three modes move at constant speed along a fixed-size step (--resolution,
 meters/step) rather than a step *rate* -- path length / resolution gives the
 step count directly, so the path is smooth regardless of speed, and
 --speed (m/s, i.e. m of path per second) sets how fast it's walked. Sent as
 a rapid sequence of `ik` commands over one persistent RPC connection, not a
-single jump.
+single jump. The actual update interval is resolution/speed -- if motion
+looks jittery, shrink --resolution (not --speed, which would just move
+faster at the same jitter). Measured ceiling for this leg: the RPC round
+trip itself supports ~60Hz, but hex_rs485_master's own round-robin poll only
+updates this leg's *commanded* target every ~20ms (~50Hz, less if other legs
+are connected and timing out slower/faster) -- pushing resolution/speed much
+past that just adds RPC traffic with no visible smoothing.
 
 Neutral is computed live from the leg's actual configured geometry
 (`get leg_geom leg<N>_len_*`), not hardcoded, so it stays correct if lengths
@@ -38,6 +50,7 @@ Usage:
     python3 tools/ik_axis_test.py --leg 1 --step 0.02 --speed 0.02
     python3 tools/ik_axis_test.py --mode circle --radius 0.04 --speed 0.03
     python3 tools/ik_axis_test.py --mode circle --center 0.12 0 -0.063 --plane xz --radius 0.03
+    python3 tools/ik_axis_test.py --mode figure8 --center 0.17 0 -0.063 --plane xy --radius 0.03
 """
 import argparse
 import math
@@ -147,6 +160,54 @@ def sweep_circle(rpc, leg, center, radius, plane, resolution, speed, loops=1):
         time.sleep(dt)
 
 
+def figure8_point(center, radius, plane, t):
+    """Point at parameter `t` on a figure-8 (lemniscate of Gerono) around
+    `center`, in the given plane. `radius` is half the figure's height: the
+    lobes span +-radius along the plane's first-named axis and +-radius/2
+    along the second. t=0 and t=2*pi both land at `center` (the crossing
+    point)."""
+    cx, cy, cz = center
+    a = radius * math.sin(t)                       # -radius .. radius
+    b = radius * math.sin(t) * math.cos(t)          # -radius/2 .. radius/2
+    if plane == "xy":
+        return (cx + a, cy + b, cz)
+    elif plane == "xz":
+        return (cx + a, cy, cz + b)
+    elif plane == "yz":
+        return (cx, cy + a, cz + b)
+    raise ValueError(f"unknown plane: {plane!r}")
+
+
+def figure8_path_length(center, radius, plane, samples=2000):
+    """Numerically estimated arc length of one full figure-8 loop -- unlike
+    a circle's circumference, the lemniscate's arc length has no closed
+    form, so this sums consecutive-point distances over a fine sample."""
+    total = 0.0
+    prev = figure8_point(center, radius, plane, 0.0)
+    for i in range(1, samples + 1):
+        t = 2 * math.pi * i / samples
+        cur = figure8_point(center, radius, plane, t)
+        total += math.dist(prev, cur)
+        prev = cur
+    return total
+
+
+def sweep_figure8(rpc, leg, center, radius, plane, resolution, speed, loops=1):
+    """`loops` full figure-8 loops (t: 0 -> loops*2*pi), stepping every
+    `resolution` meters of arc length (not a fixed step count), at `speed`
+    m/s -- constant speed along the path. Ends back at the crossing point
+    (=center) regardless of `loops`."""
+    length = figure8_path_length(center, radius, plane)
+    steps_per_loop = max(1, math.ceil(length / resolution))
+    dt = resolution / speed
+    total_steps = steps_per_loop * loops
+    for i in range(total_steps + 1):
+        t = 2 * math.pi * i / steps_per_loop
+        x, y, z = figure8_point(center, radius, plane, t)
+        ik(rpc, leg, x, y, z)
+        time.sleep(dt)
+
+
 def run_axis_test(rpc, leg, neutral, axis_index, sign, step, resolution, speed):
     label = f"{AXES[axis_index]}{'+' if sign > 0 else '-'}"
     target = list(neutral)
@@ -164,18 +225,22 @@ def main():
     ap.add_argument("--host", default="192.168.4.1")
     ap.add_argument("--port", type=int, default=5555)
     ap.add_argument("--leg", type=int, default=1, help="leg number, 1-6")
-    ap.add_argument("--mode", choices=["axes", "circle"], default="axes")
+    ap.add_argument("--mode", choices=["axes", "circle", "figure8"], default="axes")
     ap.add_argument("--step", type=float, default=0.02, help="[axes mode] sweep distance in meters (default 2cm)")
-    ap.add_argument("--radius", type=float, default=0.04, help="[circle mode] circle radius in meters (default 4cm)")
+    ap.add_argument("--radius", type=float, default=0.04,
+                     help="[circle/figure8 mode] circle radius, or half the figure-8's height, in meters (default 4cm)")
     ap.add_argument("--center", type=float, nargs=3, metavar=("X", "Y", "Z"), default=None,
-                     help="[circle mode] circle center (default: this leg's neutral point)")
+                     help="[circle/figure8 mode] shape center (default: this leg's neutral point)")
     ap.add_argument("--plane", choices=["xy", "xz", "yz"], default="xy",
-                     help="[circle mode] which plane the circle is drawn in (default xy)")
-    ap.add_argument("--loops", type=int, default=1, help="[circle mode] number of full revolutions (default 1)")
+                     help="[circle/figure8 mode] which plane the shape is drawn in (default xy)")
+    ap.add_argument("--loops", type=int, default=1, help="[circle/figure8 mode] number of full revolutions (default 1)")
     ap.add_argument("--release", action="store_true",
-                     help="[circle mode] release to gait/IK control when done (default: hold position)")
-    ap.add_argument("--resolution", type=float, default=0.002,
-                     help="path step size in meters (default 2mm) -- smaller = smoother, more RPC traffic")
+                     help="[circle/figure8 mode] release to gait/IK control when done (default: hold position)")
+    ap.add_argument("--resolution", type=float, default=0.0005,
+                     help="path step size in meters (default 0.5mm) -- smaller = smoother, more RPC traffic. "
+                          "Step interval is resolution/speed, so at the default 2cm/s this is ~25ms (~40Hz), "
+                          "close to the measured ~20ms RS485 update-rate ceiling for this leg -- going much "
+                          "smaller just wastes RPC traffic without visibly smoother motion.")
     ap.add_argument("--speed", type=float, default=0.02, help="path speed in m/s (default 2cm/s)")
     args = ap.parse_args()
     leg_index = args.leg - 1
@@ -205,23 +270,29 @@ def main():
                 print(f"  {label}: {direction}")
         else:
             center = tuple(args.center) if args.center is not None else neutral
-            print(f"\n=== circle: center=(x={center[0]:.4f}, y={center[1]:.4f}, z={center[2]:.4f}) "
+            shape = "circle" if args.mode == "circle" else "figure-8"
+            print(f"\n=== {shape}: center=(x={center[0]:.4f}, y={center[1]:.4f}, z={center[2]:.4f}) "
                   f"radius={args.radius:.3f} plane={args.plane} loops={args.loops} ===")
-            # Direct jump to the center -- not neutral, not the circle's edge.
-            # The first step of the sweep itself is what moves out to the edge.
+            # Direct jump to the center -- not neutral, and not the shape's
+            # edge/start point. The first step of the sweep itself is what
+            # moves out from there (circle: to the edge; figure8: the
+            # crossing point *is* the center, so this is already the start).
             ik(rpc, args.leg, *center)
-            input("At the circle's center. Press Enter to sweep...")
-            sweep_circle(rpc, args.leg, center, args.radius, args.plane, args.resolution, args.speed, args.loops)
-            print("Circle complete, back at the start point.")
+            input(f"At the {shape}'s center. Press Enter to sweep...")
+            if args.mode == "circle":
+                sweep_circle(rpc, args.leg, center, args.radius, args.plane, args.resolution, args.speed, args.loops)
+            else:
+                sweep_figure8(rpc, args.leg, center, args.radius, args.plane, args.resolution, args.speed, args.loops)
+            print(f"{shape.capitalize()} complete, back at the start point.")
     finally:
-        # axes mode always releases (existing behavior). Circle mode only
-        # releases on request -- default is to hold position, whether the
+        # axes mode always releases (existing behavior). circle/figure8 only
+        # release on request -- default is to hold position, whether the
         # script finished normally or exited early (Ctrl-C, error): gait/IK's
-        # own idle output looks like neutral, which is exactly what circle
-        # mode is trying to avoid snapping back to.
+        # own idle output looks like neutral, which is exactly what these
+        # modes are trying to avoid snapping back to.
         if args.mode == "axes" or args.release:
             rpc.command(f"joint {args.leg} release")
-        elif args.mode == "circle":
+        else:
             print("Holding position (pass --release to hand back to gait/IK).")
         rpc.close()
 
