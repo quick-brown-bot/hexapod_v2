@@ -158,3 +158,8 @@ Don't duplicate these — read them for their topic instead:
 - Leg protocol changes must be mirrored in both `firmware/leg/src/protocol.*`
   and `firmware/mainboard/components/hex_rs485_master/` — they encode/decode
   the same wire format independently.
+- Line endings: LF only, repo-wide, enforced via `.gitattributes`
+  (`* text=auto eol=lf`) so a Windows checkout can't silently reintroduce
+  CRLF. Don't hand-edit `.gitattributes` line-ending rules per file/dir —
+  add new binary extensions to its backstop list instead of excluding them
+  from the blanket rule.

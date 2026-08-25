@@ -74,6 +74,18 @@ Setup:
 Both extensions can coexist in the same VS Code instance. Use the workspace
 switcher or terminal context to target the correct project.
 
+### Line Endings
+
+This repo standardizes on **LF only**, enforced repo-wide by `.gitattributes`
+(`* text=auto eol=lf`) — git normalizes any text file to LF on checkout and
+commit regardless of the contributor's OS or editor, so a Windows checkout
+(relevant here since the host-side RPC/config test suite targets Windows +
+a live robot, see below) can't silently reintroduce CRLF. If an editor or
+tool still writes CRLF into a tracked text file, `git status`/`git diff`
+will show the whole file as changed even though nothing meaningful moved —
+that's line-ending drift, not a real edit; re-run `git add --renormalize .`
+(or configure the tool to write LF) rather than committing it.
+
 ---
 
 ## Mainboard Firmware

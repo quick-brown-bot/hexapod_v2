@@ -1,0 +1,19 @@
+# This repo standardizes on LF line endings for all text files, regardless
+# of contributor OS/editor settings -- see CLAUDE.md "Key repo-wide
+# conventions" and docs/development/README.md "Line endings".
+#
+# text=auto lets git auto-detect text vs. binary per file; eol=lf forces
+# both the stored blob and the working-tree checkout to LF for anything
+# git considers text, so a Windows checkout can't silently reintroduce CRLF.
+* text=auto eol=lf
+
+# Explicitly binary, as a backstop against auto-detection -- never touched
+# for line-ending conversion.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.FCStd binary
+*.zip binary
+*.step binary
+*.stp binary
+*.wrl binary
