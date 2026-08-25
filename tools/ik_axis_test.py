@@ -101,6 +101,17 @@ class Rpc:
         self.sock.close()
 
 
+def detect_first_available_leg(rpc):
+    """Picks the first leg (1-6) that has ever responded on the RS485 bus,
+    via `pos`, rather than assuming leg 1 is the one wired up -- during
+    bring-up/calibration it's common for only one leg to be connected, and
+    not necessarily leg 1."""
+    for leg in range(1, 7):
+        if "has never responded" not in rpc.command(f"pos {leg}"):
+            return leg
+    raise SystemExit("no leg responded on the RS485 bus (checked legs 1-6)")
+
+
 def get_leg_geometry(rpc, leg_index):
     coxa = float(rpc.command(f"get leg_geom leg{leg_index}_len_coxa").split("=")[1])
     femur = float(rpc.command(f"get leg_geom leg{leg_index}_len_femur").split("=")[1])
@@ -224,7 +235,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="192.168.4.1")
     ap.add_argument("--port", type=int, default=5555)
-    ap.add_argument("--leg", type=int, default=1, help="leg number, 1-6")
+    ap.add_argument("--leg", type=int, default=None,
+                     help="leg number, 1-6 (default: first leg that responds on the bus)")
     ap.add_argument("--mode", choices=["axes", "circle", "figure8"], default="axes")
     ap.add_argument("--step", type=float, default=0.02, help="[axes mode] sweep distance in meters (default 2cm)")
     ap.add_argument("--radius", type=float, default=0.04,
@@ -243,11 +255,15 @@ def main():
                           "smaller just wastes RPC traffic without visibly smoother motion.")
     ap.add_argument("--speed", type=float, default=0.02, help="path speed in m/s (default 2cm/s)")
     args = ap.parse_args()
-    leg_index = args.leg - 1
 
     print(f"Connecting to mainboard RPC at {args.host}:{args.port} ...")
     rpc = Rpc(args.host, args.port)
     print(rpc.command("version"))
+
+    if args.leg is None:
+        args.leg = detect_first_available_leg(rpc)
+        print(f"--leg not given; auto-detected leg {args.leg} as first available")
+    leg_index = args.leg - 1
 
     coxa, femur, tibia = get_leg_geometry(rpc, leg_index)
     neutral = (coxa + femur, 0.0, -tibia)

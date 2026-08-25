@@ -52,6 +52,17 @@ def rpc_send(sock, cmd):
     return buf.decode(errors="replace").strip()
 
 
+def detect_first_available_leg(sock):
+    """Picks the first leg (1-6) that has ever responded on the RS485 bus,
+    via `pos`, rather than assuming leg 1 is the one wired up -- during
+    bring-up/calibration it's common for only one leg to be connected, and
+    not necessarily leg 1."""
+    for leg in range(1, 7):
+        if "has never responded" not in rpc_send(sock, f"pos {leg}"):
+            return leg
+    raise SystemExit("no leg responded on the RS485 bus (checked legs 1-6)")
+
+
 def set_joint(sock, leg, coxa, femur, tibia):
     return rpc_send(sock, f"joint {leg} {coxa:.1f} {femur:.1f} {tibia:.1f}")
 
@@ -88,13 +99,18 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="192.168.4.1", help="mainboard RPC host (its own WiFi AP IP by default)")
     ap.add_argument("--port", type=int, default=5555)
-    ap.add_argument("--leg", type=int, default=1, help="leg number, 1-6")
+    ap.add_argument("--leg", type=int, default=None,
+                     help="leg number, 1-6 (default: first leg that responds on the bus)")
     ap.add_argument("--angle", type=float, default=20.0, help="test angle in degrees, one joint at a time")
     args = ap.parse_args()
 
     print(f"Connecting to mainboard RPC at {args.host}:{args.port} ...")
     sock = socket.create_connection((args.host, args.port), timeout=5)
     print(rpc_send(sock, "version"))
+
+    if args.leg is None:
+        args.leg = detect_first_available_leg(sock)
+        print(f"--leg not given; auto-detected leg {args.leg} as first available")
 
     summary = {}
     try:

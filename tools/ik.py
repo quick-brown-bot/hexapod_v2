@@ -29,17 +29,33 @@ def rpc(host, port, cmd, timeout=3.0):
     return data.decode(errors="replace").strip()
 
 
+def detect_first_available_leg(host, port):
+    """Picks the first leg (1-6) that has ever responded on the RS485 bus,
+    via `pos`, rather than assuming leg 1 is the one wired up -- during
+    bring-up/calibration it's common for only one leg to be connected, and
+    not necessarily leg 1."""
+    for leg in range(1, 7):
+        if "has never responded" not in rpc(host, port, f"pos {leg}"):
+            return leg
+    raise SystemExit("no leg responded on the RS485 bus (checked legs 1-6)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("x", type=float)
     ap.add_argument("y", type=float)
     ap.add_argument("z", type=float)
-    ap.add_argument("--leg", type=int, default=1, help="leg number, 1-6 (default 1)")
+    ap.add_argument("--leg", type=int, default=None,
+                     help="leg number, 1-6 (default: first leg that responds on the bus)")
     ap.add_argument("--host", default="192.168.4.1")
     ap.add_argument("--port", type=int, default=5555)
     ap.add_argument("--release", action="store_true",
                      help="release the override right after (default: hold the position)")
     args = ap.parse_args()
+
+    if args.leg is None:
+        args.leg = detect_first_available_leg(args.host, args.port)
+        print(f"--leg not given; auto-detected leg {args.leg} as first available")
 
     print(rpc(args.host, args.port, f"ik {args.leg} {args.x} {args.y} {args.z}"))
     time.sleep(0.3)  # let the servo settle before reading position back

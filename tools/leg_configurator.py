@@ -10,6 +10,19 @@ Modes (--mode):
   current  Current-sense calibration only (see below).
   servo    Servo calibration only: PWM center (neutral), a gentle direction
            check, and an optional extended range walk (see below).
+  invert   Query or directly set/flip one or more joints' persisted `INVERT`
+           sign (--channels selects which), without the centering + gentle
+           direction check + optional range walk that `--mode servo` runs
+           for every selected joint. Use this when you already know a
+           joint's sign is backwards (e.g. from a `--mode servo` run on a
+           different leg of the same build) and just want to fix this one
+           joint on this board. With neither --invert nor --toggle-invert,
+           just reports the current persisted value(s).
+  center   Just the live-jog PWM-center (neutral) step for one or more
+           joints (--channels selects which) -- no gentle direction check or
+           extended range walk. Use this to touch up a joint's neutral
+           (e.g. it drifted, or the horn was re-seated) without re-running
+           the direction check for joints that are already known-good.
 
 Every mode except 'address' shows the board diagram and confirms/sets the
 leg address first, since both current-sense and servo work need you to know
@@ -79,18 +92,21 @@ which physical connector is which.
      afterward, and what a commanded angle of 0 degrees maps to in normal
      (RS485-driven) operation.
   2. Gentle direction check: a small nudge (`--step` us, default 100) to
-     each side of that just-set center, confirmed step by step (Enter to
-     continue, 'q' to quit) so you can watch which physical direction each
-     move produces -- catches a backwards joint before doing anything more.
-     Current is sampled at every step against a just-measured neutral
+     each side of that just-set center -- catches a backwards joint before
+     doing anything more. Phrased entirely in physical-motion terms (per
+     JOINT_EXPECTED_DIRECTION -- coxa: counter-clockwise/clockwise viewed
+     from above with Z up; femur: up/down; tibia: curl under/straighten --
+     see docs/architecture/HARDWARE_AND_MECHANICS.md "Joint Angle Sign
+     Convention" for the derivation), not PWM pulse widths or INVERT signs:
+     states the expected direction, nudges, and asks whether it moved that
+     way -- Enter/'y' accepts and continues, 'r' retries the same nudge,
+     'i' flips+persists `INVERT` and retries, so a wrong direction is fixed
+     and reconfirmed immediately rather than found out during a later
+     IK/gait test. Positive is tested first, then negative the same way.
+     Current is sampled at every nudge against a just-measured neutral
      baseline, as a stall/binding safety net (informational only, not a
-     hard cutoff). Asks what direction you saw for each nudge and prints the
-     expected direction per the mainboard IK's leg-local convention (femur/
-     tibia only -- coxa's expected yaw direction depends on this leg's mount
-     rotation, which this script has no access to). If it doesn't match,
-     offers to flip and persist that joint's sign (`INVERT`) right there and
-     re-nudges so you can confirm the fix immediately, instead of finding out
-     during a later IK/gait test.
+     hard cutoff). Returns to neutral and moves on to the next joint once
+     both directions are confirmed, with no further confirmation needed.
   3. Optional, asked once after all selected joints' gentle checks: an
      extended range walk per joint toward the min/max pulse in the same
      small increments, still step-confirmed and current-monitored, to find
@@ -109,6 +125,10 @@ Usage:
     python tools/leg_configurator.py --mode current --channels coxa
     python tools/leg_configurator.py --mode servo                # servo center/direction/range only
     python tools/leg_configurator.py --mode servo --channels femur --step 150
+    python tools/leg_configurator.py --mode center --channels femur   # re-center just femur's neutral
+    python tools/leg_configurator.py --mode invert --channels tibia   # report tibia's current INVERT
+    python tools/leg_configurator.py --mode invert --channels tibia --invert -1
+    python tools/leg_configurator.py --mode invert --channels coxa --toggle-invert
     python tools/leg_configurator.py --zero                      # build aid: center all 3 servos
 
 Requires pyserial -- if you don't have it in your default Python, run this
@@ -804,18 +824,21 @@ def persist_invert(link: LegLink, joint: int, invert: int) -> bool:
     return ok
 
 
-# Expected direction for a *positive* commanded angle, per the mainboard IK's
-# leg-local convention (hex_kinematics/leg.c) -- derived numerically, not just
-# read off a comment, since only tibia has one ("increasing angle = foot
-# lowers"); femur's sign isn't documented anywhere and had to be worked out
-# from the actual IK formula. Coxa yaw's meaning in body-frame terms depends
-# on this leg's mount rotation (docs/architecture/HARDWARE_AND_MECHANICS.md
-# "Coordinate Conventions"), which this script has no access to -- so there's
-# no universal expectation to print for it here.
-JOINT_EXPECTED_HINT = {
-    "coxa": None,
-    "femur": "foot should rise (up) for a positive angle, per the IK model",
-    "tibia": "foot should lower (down) for a positive angle, per the IK model",
+# Short, physical-motion phrasing for the gentle direction check -- (word
+# for a positive commanded angle, word for negative), deliberately free of
+# PWM/INVERT jargon since the check is about what the leg visibly does, not
+# about the signal driving it. See docs/architecture/HARDWARE_AND_MECHANICS.md
+# "Joint Angle Sign Convention" for the full derivation (from
+# hex_kinematics/leg.c) and hardware confirmation. Coxa's rotation direction
+# is a geometric property of the leg-local frame itself, so it's universal
+# across all six legs, even though what it means in *body*-frame terms
+# ("left" vs "right") depends on each leg's mount rotation -- that
+# mount-rotation dependency is about translating this into body-frame
+# language, not about whether this leg-local expectation holds.
+JOINT_EXPECTED_DIRECTION = {
+    "coxa":  ("counter-clockwise (viewed from above, Z up)", "clockwise (viewed from above, Z up)"),
+    "femur": ("up", "down"),
+    "tibia": ("curl under", "straighten"),
 }
 
 
@@ -948,54 +971,58 @@ def persist_neutral(link: LegLink, joint: int, us: int) -> None:
 
 def gentle_direction_check(link: LegLink, name: str, joint: int, ch: int,
                             step_us: int, us_neutral: int, baseline_mv: dict) -> None:
-    """Nudges +/- around center, asks what direction you saw, and -- since
-    this is a raw PWM nudge, not a commanded angle -- a *positive* pulse here
-    is what servo.cpp calls "positive" before INVERT is applied. Offers to
-    flip and persist INVERT if what you saw doesn't match the IK model's
-    convention (see JOINT_EXPECTED_HINT), then re-nudges so you can confirm
-    the fix without re-running the whole wizard."""
-    print(f"\n=== {name.upper()} (joint {joint}) -- gentle direction check around {us_neutral} us ===")
-    hint = JOINT_EXPECTED_HINT.get(name)
-    if hint:
-        print(f"    expected for + : {hint}")
-    else:
-        print("    expected for + : depends on this leg's mount rotation -- no universal answer here")
+    """Interactive direction check, phrased entirely in physical-motion terms
+    (JOINT_EXPECTED_DIRECTION) rather than PWM pulse widths or INVERT signs
+    -- the operator is just confirming which way the leg moved, not reading
+    signal values. Assumes the joint is already sitting at `us_neutral`
+    (true for its one caller, run_servo_calibration(), which just finished
+    interactive_center_joint() there) -- no separate "setting to neutral"
+    step, since that would just be re-sending the pulse it's already at:
 
-    while True:
-        wizard_step(f"{name}: confirm at center ({us_neutral} us)")
-        send_pwm(link, joint, us_neutral)
-        report_current(link, ch, baseline_mv)
+      1. State the expected direction for a positive commanded angle
+         (Enter to continue).
+      2. Nudge positive and ask whether it moved that way -- Enter/'y'
+         accepts and moves on to step 3, 'r' retries (loops back to 1),
+         'i' flips+persists INVERT then retries (loops back to 1).
+      3. State the expected direction for a negative commanded angle.
+      4. Nudge negative and ask the same way -- 'r'/'i' both loop back to 3.
+      5. Return to neutral and move on to the next joint -- no further
+         confirmation.
 
-        wizard_step(f"{name}: move to {us_neutral + step_us} us (+{step_us}). Watch which way it moves.")
-        send_pwm(link, joint, us_neutral + step_us)
-        report_current(link, ch, baseline_mv)
-        pos_seen = input("    which way did it move? ").strip()
+    `PWM <joint> <us>` (servo_write_pulse_us() in servo.cpp) is a *raw*
+    pulse-width write that bypasses INVERT entirely -- only the real
+    angle-command path (servo_write_angle()) applies it. So each nudge here
+    is signed by the joint's currently persisted invert, mirroring what
+    servo_write_angle() would do for a small commanded angle -- otherwise
+    flipping INVERT would send the exact same raw pulse and 'i' would never
+    visibly change anything (a real bug in an earlier version of this
+    check)."""
+    pos_word, neg_word = JOINT_EXPECTED_DIRECTION.get(name, ("+", "-"))
+    print(f"\n=== {name.upper()} (joint {joint}) -- gentle direction check ===")
 
-        wizard_step(f"{name}: back to center ({us_neutral} us)")
-        send_pwm(link, joint, us_neutral)
-        report_current(link, ch, baseline_mv)
-
-        wizard_step(f"{name}: move to {us_neutral - step_us} us (-{step_us}). "
-                    f"Should be the opposite direction.")
-        send_pwm(link, joint, us_neutral - step_us)
-        report_current(link, ch, baseline_mv)
-        neg_seen = input("    which way did it move? ").strip()
-
-        wizard_step(f"{name}: back to center ({us_neutral} us) before the next joint")
-        send_pwm(link, joint, us_neutral)
-        report_current(link, ch, baseline_mv)
-
-        print(f"    recorded: +{step_us} us -> {pos_seen or '(no answer)'}   "
-              f"-{step_us} us -> {neg_seen or '(no answer)'}")
-
-        if not confirm(f"Does that match what {name} should do (invert it if not)?", default_yes=True):
-            current = query_invert(link).get(joint, 1)
-            new_invert = -current
-            print(f"    flipping INVERT: {current} -> {new_invert}")
-            if persist_invert(link, joint, new_invert):
-                print("    re-running the nudge with the new sign so you can confirm it...")
+    def nudge_and_ask(sign: int, word: str) -> None:
+        while True:
+            wizard_step(f"{name}: expect it to move {word}")
+            invert = query_invert(link).get(joint, 1)
+            send_pwm(link, joint, us_neutral + sign * invert * step_us)
+            report_current(link, ch, baseline_mv)
+            ans = input(f"    did it move {word}? [Y/r=retry/i=invert] > ").strip().lower()
+            send_pwm(link, joint, us_neutral)
+            report_current(link, ch, baseline_mv)
+            if ans == "r":
                 continue
-        break
+            if ans == "i":
+                new_invert = -invert
+                print(f"    flipping INVERT: {invert} -> {new_invert}")
+                persist_invert(link, joint, new_invert)
+                continue
+            return
+
+    nudge_and_ask(+1, pos_word)
+    nudge_and_ask(-1, neg_word)
+
+    send_pwm(link, joint, us_neutral)
+    report_current(link, ch, baseline_mv)
 
 
 def extended_range_walk(link: LegLink, name: str, joint: int, ch: int,
@@ -1076,6 +1103,62 @@ def run_servo_calibration(link: LegLink, names, step_us: int) -> None:
         center_all_to_neutral(link, query_pwm_neutral(link))
 
 
+def run_center_only(link: LegLink, names) -> None:
+    """Just the live-jog PWM-center step for each selected joint (see
+    interactive_center_joint) -- no gentle direction check or range walk.
+    All joints are moved to their currently-persisted neutral first, so the
+    leg is in a known pose before jogging starts, same as
+    run_servo_calibration's first step."""
+    print("\n=== PWM neutral (center) adjustment only ===")
+    print("Make sure the leg is free to move. Type 'q' at any prompt to stop early --")
+    print("all joints return to center first.")
+
+    joint_of = dict(JOINTS)
+    try:
+        neutral = query_pwm_neutral(link)
+        wizard_step("Center all three servos to their current calibrated neutral")
+        center_all_to_neutral(link, neutral)
+
+        for name in names:
+            joint = joint_of[name]
+            us_before = neutral.get(joint, NEUTRAL_PWM_US)
+            us = interactive_center_joint(link, name, joint, us_before)
+            if us != us_before:
+                persist_neutral(link, joint, us)
+            neutral[joint] = us
+
+        wizard_step("All done -- return everything to center")
+        center_all_to_neutral(link, neutral)
+        print("\nPWM neutral adjustment complete.")
+
+    except Abort:
+        print("\nQuit requested -- returning all servos to center before exiting.")
+        center_all_to_neutral(link, query_pwm_neutral(link))
+
+
+def run_invert_only(link: LegLink, names, set_value, toggle) -> None:
+    """Query or directly set/flip each selected joint's persisted INVERT
+    sign -- no PWM movement, no gentle direction check. With both
+    `set_value` and `toggle` falsy, just reports the current value(s)."""
+    joint_of = dict(JOINTS)
+    current = query_invert(link)
+    for name in names:
+        joint = joint_of[name]
+        before = current.get(joint, 1)
+        if set_value is not None:
+            new = set_value
+        elif toggle:
+            new = -before
+        else:
+            print(f"  {name} (joint {joint}): invert={before}")
+            continue
+        if new == before:
+            print(f"  {name} (joint {joint}): invert already {new}, nothing to do")
+            continue
+        print(f"  {name} (joint {joint}): invert {before} -> {new}")
+        persist_invert(link, joint, new)
+
+
 def run_address_only(link: LegLink) -> None:
     addr = prompt_leg_address(link)
     print(f"\nLeg address set to {addr}.")
@@ -1118,18 +1201,28 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", help="serial port, e.g. COM10 (auto-detected if omitted)")
     ap.add_argument("--baud", type=int, default=115200)
-    ap.add_argument("--mode", choices=["full", "address", "current", "servo"], default="full",
+    ap.add_argument("--mode", choices=["full", "address", "current", "servo", "center", "invert"],
+                     default="full",
                      help="full (default): address + current-sense + servo calibration in "
                           "sequence; address: just set the leg number; current: current-sense "
-                          "calibration only; servo: PWM center/direction/range calibration only")
+                          "calibration only; servo: PWM center/direction/range calibration only; "
+                          "center: PWM neutral (center) adjustment only, no direction check or "
+                          "range walk; invert: query or directly set/flip a joint's INVERT sign, "
+                          "no PWM movement")
     ap.add_argument("--channels", default="coxa,femur,tibia",
-                     help="comma-separated subset of coxa,femur,tibia -- applies to current/servo "
-                          "work (default: all three)")
+                     help="comma-separated subset of coxa,femur,tibia -- applies to current/servo/"
+                          "center/invert work (default: all three)")
     ap.add_argument("--step", type=int, default=100,
                      help="servo mode: pulse-width nudge in us for the gentle direction check and "
                           "the extended range walk (default 100)")
     ap.add_argument("--zero", action="store_true",
                      help="build aid: center all 3 servos to their calibrated neutral and exit")
+    invert_group = ap.add_mutually_exclusive_group()
+    invert_group.add_argument("--invert", type=int, choices=[1, -1], default=None,
+                               help="invert mode: set the selected joint(s) INVERT to this value")
+    invert_group.add_argument("--toggle-invert", action="store_true",
+                               help="invert mode: flip the selected joint(s) currently persisted "
+                                    "INVERT sign")
     args = ap.parse_args()
 
     names = [n.strip() for n in args.channels.split(",") if n.strip()]
@@ -1152,6 +1245,14 @@ def main() -> None:
         run_address_only(link)
         return
 
+    if args.mode == "invert":
+        # No physical movement here (unlike center/servo/current), so skip
+        # the board diagram -- just confirm which leg is about to change.
+        addr = prompt_leg_address(link)
+        print(f"\nConfiguring leg {addr}.")
+        run_invert_only(link, names, args.invert, args.toggle_invert)
+        return
+
     print(BOARD_DIAGRAM)
     addr = prompt_leg_address(link)
     print(f"\nConfiguring leg {addr}.")
@@ -1160,6 +1261,8 @@ def main() -> None:
         run_current_calibration(link, names)
     elif args.mode == "servo":
         run_servo_calibration(link, names, args.step)
+    elif args.mode == "center":
+        run_center_only(link, names)
     else:  # full
         run_current_calibration(link, names)
         run_servo_calibration(link, names, args.step)
