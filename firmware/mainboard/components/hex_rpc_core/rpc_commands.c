@@ -15,6 +15,8 @@
  *   ik <leg 1-6> <x_m> <y_m> <z_m>  -- leg-local Cartesian foot target -> IK -> per-leg
  *                                       joint override (same override as `joint`, so
  *                                       `joint <leg> release` also releases an `ik` set leg)
+ *   pos <leg 1-6>  -- request + read back this leg's actual reported joint angles over
+ *                     RS485 (ground truth for what the LegBoard did, vs. what was sent)
  */
 
 #include "rpc_commands.h"
@@ -28,6 +30,9 @@
 #include "controller_internal.h"
 #include "robot_control.h"
 #include "robot_config.h"
+#include "rs485_master.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -143,7 +148,7 @@ static int tokenize(char *line, char *argv[], int max_args) {
 }
 
 static void cmd_help(void) {
-	rpc_send("Commands: get set setpersist export factory-reset save list help version joint ik");
+	rpc_send("Commands: get set setpersist export factory-reset save list help version joint ik pos");
 }
 
 // Clamps a commanded joint angle (degrees) to this leg/joint's namespace-backed
@@ -239,6 +244,53 @@ static void cmd_ik(int argc, char *argv[]) {
     robot_set_leg_joint_override_deg(leg, coxa_deg, femur_deg, tibia_deg);
     rpc_send("ik %d: target=(%.3f,%.3f,%.3f) -> coxa=%.1f femur=%.1f tibia=%.1f",
               leg_1based, x, y, z, coxa_deg, femur_deg, tibia_deg);
+}
+
+// Requests fresh joint-position telemetry from this leg over RS485 and
+// reports it back -- ground truth for what the LegBoard actually did, to
+// compare against what was commanded (e.g. via `joint`/`ik`).
+//
+// request_positions() is a true one-shot flag: rs485_master_task polls all
+// legs continuously in the background regardless of whether anyone is
+// watching, and the very next successful poll both consumes the flag AND
+// overwrites the cached telemetry with a fresh (non-position) struct. A
+// single request+wait can easily race: by the time this handler wakes up,
+// the flagged response may already have been consumed and clobbered by the
+// following unflagged poll. So this re-arms the flag every retry
+// iteration instead of once -- as long as we keep requesting faster than
+// the request can go stale, every poll of this leg keeps including
+// positions, so the race is closed rather than just made unlikely.
+static void cmd_pos(int argc, char *argv[]) {
+    if (argc < 2) {
+        rpc_send("usage: pos <leg 1-6>");
+        return;
+    }
+    int leg_1based = (int)strtol(argv[1], NULL, 10);
+    int leg = leg_1based - 1;
+    if (leg < 0 || leg >= NUM_LEGS) {
+        rpc_send("pos: leg out of range (1-%d)", NUM_LEGS);
+        return;
+    }
+
+    leg_telemetry_t t = {0};
+    bool got_positions = false;
+    for (int attempt = 0; attempt < 50 && !got_positions; ++attempt) {
+        rs485_master_request_positions(leg);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        if (!rs485_master_get_telemetry(leg, &t) || !t.valid) {
+            rpc_send("pos %d: leg has never responded", leg_1based);
+            return;
+        }
+        got_positions = t.has_positions;
+    }
+
+    if (!got_positions) {
+        rpc_send("pos %d: stale=%d status=%d (no position data after retrying -- try again)",
+                  leg_1based, t.stale, t.status);
+        return;
+    }
+    rpc_send("pos %d: stale=%d coxa=%.1f femur=%.1f tibia=%.1f",
+              leg_1based, t.stale, t.pos_coxa_deg, t.pos_femur_deg, t.pos_tibia_deg);
 }
 
 static void cmd_version(void) {
@@ -440,6 +492,7 @@ static void rpc_execute_line(char *line) {
 	else if (strcmp(argv[0], "factory-reset")==0) { cmd_factory_reset(); }
 	else if (strcmp(argv[0], "joint")==0) { cmd_joint(argc, argv); }
 	else if (strcmp(argv[0], "ik")==0) { cmd_ik(argc, argv); }
+	else if (strcmp(argv[0], "pos")==0) { cmd_pos(argc, argv); }
 	else { rpc_send("unknown: %s", argv[0]); }
 }
 

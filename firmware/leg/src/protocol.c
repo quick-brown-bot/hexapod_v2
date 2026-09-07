@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 uint8_t proto_crc8(const uint8_t *data, size_t len)
 {
@@ -75,17 +76,35 @@ bool proto_parse_pull(char *line, proto_pull_t *out)
     return true;
 }
 
+// Formats `v` to one decimal place using integer arithmetic instead of
+// snprintf's %f -- this build's printf silently emits an empty string for
+// float specifiers rather than the expected text (confirmed on the wire:
+// the mainboard was receiving "<1,00,0,0,0,0,,,*A4", positions present as
+// bare commas with nothing between them), so `%.1f` here was quietly
+// dropping every position field even though include_positions was true.
+static void format_1dp(float v, char *buf, size_t buf_sz)
+{
+    bool neg = v < 0.0f;
+    float av = neg ? -v : v;
+    int32_t scaled = (int32_t)(av * 10.0f + 0.5f); // round to nearest 0.1
+    snprintf(buf, buf_sz, "%s%ld.%ld", neg ? "-" : "", (long)(scaled / 10), (long)(scaled % 10));
+}
+
 int proto_build_response(const proto_response_t *r, char *buf, size_t buf_sz)
 {
     if (!r || !buf) return -1;
 
     int n;
     if (r->include_positions) {
-        n = snprintf(buf, buf_sz, "<%u,%02X,%u,%u,%u,%u,%.1f,%.1f,%.1f",
+        char pc[16], pf[16], pt[16];
+        format_1dp(r->pos_coxa_deg, pc, sizeof(pc));
+        format_1dp(r->pos_femur_deg, pf, sizeof(pf));
+        format_1dp(r->pos_tibia_deg, pt, sizeof(pt));
+        n = snprintf(buf, buf_sz, "<%u,%02X,%u,%u,%u,%u,%s,%s,%s",
                      (unsigned)r->addr, (unsigned)r->status,
                      (unsigned)r->current_total_ma, (unsigned)r->current_coxa_ma,
                      (unsigned)r->current_femur_ma, (unsigned)r->current_tibia_ma,
-                     r->pos_coxa_deg, r->pos_femur_deg, r->pos_tibia_deg);
+                     pc, pf, pt);
     } else {
         n = snprintf(buf, buf_sz, "<%u,%02X,%u,%u,%u,%u",
                      (unsigned)r->addr, (unsigned)r->status,

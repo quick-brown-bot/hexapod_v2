@@ -8,4 +8,5 @@ idf_component_register(
     hex_shared_types
     hex_actuation
     hex_robot_config
+    hex_rs485_master
 )
