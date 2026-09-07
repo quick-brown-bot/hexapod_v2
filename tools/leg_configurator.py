@@ -80,7 +80,15 @@ which physical connector is which.
 
 ## Servo calibration (--mode servo, and part of full)
 
-  For each selected joint, in turn:
+  First, if a previous leg's INVERT signs were saved via
+  --save-invert-defaults, offers to copy them onto this leg's selected
+  joints before anything else -- see apply_invert_defaults(). This is a
+  starting guess (INVERT corrects for this specific leg's manual servo-horn
+  assembly, which can still vary leg to leg even though the direction
+  *convention* itself is universal), not a substitute for step 2 below,
+  which still runs and can override it.
+
+  Then, for each selected joint, in turn:
   1. Center: a live jog UI -- UP/DOWN nudges the pulse width by
      JOG_STEP_FINE_US, LEFT/RIGHT by the coarser JOG_STEP_COARSE_US, the
      leg moves and the current value redraws in place as you go. Enter
@@ -95,7 +103,7 @@ which physical connector is which.
      each side of that just-set center -- catches a backwards joint before
      doing anything more. Phrased entirely in physical-motion terms (per
      JOINT_EXPECTED_DIRECTION -- coxa: counter-clockwise/clockwise viewed
-     from above with Z up; femur: up/down; tibia: curl under/straighten --
+     from above with Z up; femur: up/down; tibia: straighten/curl under --
      see docs/architecture/HARDWARE_AND_MECHANICS.md "Joint Angle Sign
      Convention" for the derivation), not PWM pulse widths or INVERT signs:
      states the expected direction, nudges, and asks whether it moved that
@@ -130,6 +138,9 @@ Usage:
     python tools/leg_configurator.py --mode invert --channels tibia --invert -1
     python tools/leg_configurator.py --mode invert --channels coxa --toggle-invert
     python tools/leg_configurator.py --zero                      # build aid: center all 3 servos
+    python tools/leg_configurator.py --save-invert-defaults      # save this leg's INVERT for reuse
+    python tools/leg_configurator.py --mode full                 # next leg: offers to copy them
+    python tools/leg_configurator.py --apply-invert-defaults     # next leg: write them, no prompts
 
 Requires pyserial -- if you don't have it in your default Python, run this
 with PlatformIO's bundled interpreter instead:
@@ -194,9 +205,11 @@ SPAN_POWER = ["1/4W", "1/4W (1/2W recommended)", "1/2W", "1W"]
 NOMINAL_RAIL_V = 6.0  # servo rail, only used for a first-run reference-current guess
 
 # Remembers the reference current you typed for each resistor value last
-# time, so re-runs (e.g. calibrating the next leg) default to that instead of
-# a plain theoretical guess. Lives outside the repo -- this is a per-operator
-# convenience, not project state.
+# time (so re-runs default to that instead of a plain theoretical guess) and
+# the INVERT sign you confirmed correct for each joint on a previously
+# calibrated leg (so the next leg can start from that guess instead of
+# rediscovering it from scratch -- see load_invert_defaults()). Lives
+# outside the repo -- this is a per-operator convenience, not project state.
 CACHE_PATH = Path.home() / ".hexapod_leg_configurator.json"
 
 # Live-detection tuning for wait_for_load_change(): a reading counts as
@@ -496,21 +509,55 @@ def read_float_default(prompt: str, default: float):
             print("Not a number (or 'b' to go back, 'r' to re-measure), try again.")
 
 
-def load_ref_current_cache() -> dict:
+def _load_cache() -> dict:
+    """Whole on-disk cache: {"ref_current": {ohms: ma}, "invert_defaults":
+    {joint_index: +-1}}. Transparently upgrades the older flat
+    {ohms: ma}-only format from before invert_defaults existed."""
     try:
         with open(CACHE_PATH, "r", encoding="utf-8") as f:
-            return {float(k): float(v) for k, v in json.load(f).items()}
+            raw = json.load(f)
     except (FileNotFoundError, ValueError, json.JSONDecodeError, OSError):
         return {}
+    if "ref_current" in raw or "invert_defaults" in raw:
+        return raw
+    return {"ref_current": raw}
+
+
+def _save_cache(cache: dict) -> None:
+    try:
+        with open(CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2)
+    except OSError:
+        pass  # best-effort; a stale/missing cache just falls back to theory/discovery
+
+
+def load_ref_current_cache() -> dict:
+    raw = _load_cache().get("ref_current", {})
+    return {float(k): float(v) for k, v in raw.items()}
 
 
 def save_ref_current(cache: dict, ohms: float, value: float) -> None:
     cache[ohms] = value
-    try:
-        with open(CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump({str(k): v for k, v in cache.items()}, f, indent=2)
-    except OSError:
-        pass  # best-effort; a stale/missing cache just falls back to theory
+    full = _load_cache()
+    full["ref_current"] = {str(k): v for k, v in cache.items()}
+    _save_cache(full)
+
+
+def load_invert_defaults() -> dict:
+    """{joint_index: +-1} last saved via save_invert_defaults() on some
+    previously calibrated leg, or {} if none has been saved yet."""
+    raw = _load_cache().get("invert_defaults", {})
+    return {int(k): int(v) for k, v in raw.items()}
+
+
+def save_invert_defaults(values: dict) -> None:
+    """Merges `values` ({joint_index: +-1}) into the persisted cache,
+    leaving any joints not present in `values` untouched."""
+    full = _load_cache()
+    existing = {int(k): int(v) for k, v in full.get("invert_defaults", {}).items()}
+    existing.update(values)
+    full["invert_defaults"] = {str(k): v for k, v in existing.items()}
+    _save_cache(full)
 
 
 def default_ref_current_ma(cache: dict, ohms: float) -> float:
@@ -838,7 +885,13 @@ def persist_invert(link: LegLink, joint: int, invert: int) -> bool:
 JOINT_EXPECTED_DIRECTION = {
     "coxa":  ("counter-clockwise (viewed from above, Z up)", "clockwise (viewed from above, Z up)"),
     "femur": ("up", "down"),
-    "tibia": ("curl under", "straighten"),
+    # Positive tibia angle lowers the foot (HARDWARE_AND_MECHANICS.md), which
+    # -- numerically confirmed from leg_ik_solve()'s own formula, not just
+    # assumed -- means the knee angle *increases* toward full extension (the
+    # foot reaches farther from the femur joint as it goes lower), i.e. the
+    # leg straightens; negative folds the knee back down, i.e. curls under.
+    # An earlier version of this had these swapped.
+    "tibia": ("straighten", "curl under"),
 }
 
 
@@ -1051,6 +1104,52 @@ def extended_range_walk(link: LegLink, name: str, joint: int, ch: int,
     report_current(link, ch, baseline_mv)
 
 
+def write_invert_values(link: LegLink, values: dict, joint_of: dict) -> None:
+    """values: {name: +-1}. Persists INVERT for each, skipping (and saying
+    so) any joint already at that value."""
+    current = query_invert(link)
+    for name, sign in values.items():
+        joint = joint_of[name]
+        if current.get(joint, 1) == sign:
+            print(f"  {name} (joint {joint}): invert already {sign}, nothing to do")
+            continue
+        print(f"  {name} (joint {joint}): invert -> {sign} (default)")
+        persist_invert(link, joint, sign)
+
+
+def selected_invert_defaults(names, joint_of: dict) -> dict:
+    """{name: +-1} subset of the saved defaults (load_invert_defaults())
+    covering just the selected joints -- {} if none saved yet, or none of
+    the saved ones are in `names`."""
+    defaults = load_invert_defaults()
+    return {name: defaults[joint_of[name]] for name in names if joint_of[name] in defaults}
+
+
+def apply_invert_defaults(link: LegLink, names, joint_of: dict) -> None:
+    """Offers to seed the selected joints' INVERT with the values saved
+    (via --save-invert-defaults) from a previously calibrated leg, so the
+    gentle direction check that follows is usually just a confirmation
+    instead of a from-scratch discovery. This is a starting guess, not a
+    guarantee -- INVERT corrects for how this specific leg's servo horn
+    happens to be splined on, which is a manual assembly detail that can
+    still vary leg to leg even when the direction *convention* itself
+    (JOINT_EXPECTED_DIRECTION) is universal -- so the gentle check still
+    runs regardless and can override it with 'i' if this leg differs.
+    No-op, silently, if no defaults have been saved yet. See
+    --apply-invert-defaults for a non-interactive equivalent that skips the
+    gentle check entirely."""
+    selected = selected_invert_defaults(names, joint_of)
+    if not selected:
+        return
+
+    summary = ", ".join(f"{name}={sign:+d}" for name, sign in selected.items())
+    if not confirm(f"Apply known-good invert defaults from a previously-configured leg ({summary})?",
+                    default_yes=True):
+        return
+
+    write_invert_values(link, selected, joint_of)
+
+
 def run_servo_calibration(link: LegLink, names, step_us: int) -> None:
     """Per selected joint: interactively recalibrate the PWM center, then a
     step-confirmed gentle direction check around that center, then an
@@ -1063,6 +1162,8 @@ def run_servo_calibration(link: LegLink, names, step_us: int) -> None:
 
     joint_of = dict(JOINTS)
     try:
+        apply_invert_defaults(link, names, joint_of)
+
         neutral = query_pwm_neutral(link)
         wizard_step("Center all three servos to their current calibrated neutral")
         center_all_to_neutral(link, neutral)
@@ -1217,6 +1318,14 @@ def main() -> None:
                           "the extended range walk (default 100)")
     ap.add_argument("--zero", action="store_true",
                      help="build aid: center all 3 servos to their calibrated neutral and exit")
+    ap.add_argument("--save-invert-defaults", action="store_true",
+                     help="read this leg's current INVERT sign(s) (--channels selects which) and "
+                          "save them to the local cache as the default to offer/copy onto future "
+                          "legs' servo calibration, then exit")
+    ap.add_argument("--apply-invert-defaults", action="store_true",
+                     help="write the saved invert defaults (--channels selects which) straight to "
+                          "this leg's INVERT and exit -- no confirmation prompt, no gentle direction "
+                          "check; use --mode servo/full instead if you want the check")
     invert_group = ap.add_mutually_exclusive_group()
     invert_group.add_argument("--invert", type=int, choices=[1, -1], default=None,
                                help="invert mode: set the selected joint(s) INVERT to this value")
@@ -1239,6 +1348,27 @@ def main() -> None:
 
     if args.zero:
         run_zero_position(link)
+        return
+
+    if args.save_invert_defaults:
+        joint_of = dict(JOINTS)
+        current = query_invert(link)
+        values = {joint_of[n]: current.get(joint_of[n], 1) for n in names}
+        save_invert_defaults(values)
+        summary = ", ".join(f"{n}={values[joint_of[n]]:+d}" for n in names)
+        print(f"Saved invert defaults ({summary}) to {CACHE_PATH} for future legs.")
+        return
+
+    if args.apply_invert_defaults:
+        joint_of = dict(JOINTS)
+        selected = selected_invert_defaults(names, joint_of)
+        if not selected:
+            print("No invert defaults saved yet for the selected channel(s) -- run "
+                  "--save-invert-defaults on a known-good leg first.", file=sys.stderr)
+            sys.exit(1)
+        addr = prompt_leg_address(link)
+        print(f"\nConfiguring leg {addr}.")
+        write_invert_values(link, selected, joint_of)
         return
 
     if args.mode == "address":
