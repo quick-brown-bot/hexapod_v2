@@ -209,6 +209,16 @@ void app_main(void)
     
     controller_init(&ctrl_cfg);
 
+    // Launch the primary controller's input driver. controller_init() only
+    // stores config -- without an explicit launch here the FlySky iBUS UART
+    // reader task never starts, so no stick input reaches locomotion. (The
+    // dispatch that used to do this lived in user_command_init(), which
+    // nothing calls.) Only the iBUS driver is wired up here; WIFI_TCP is
+    // handled by the always-on secondary interface below.
+    if (ctrl_cfg.driver_type == CONTROLLER_DRIVER_FLYSKY_IBUS) {
+        controller_driver_init_flysky_ibus(&ctrl_cfg);
+    }
+
     // ALWAYS initialize WiFi TCP controller for RPC commands (separate from primary controller)
     // This provides network-based diagnostics and control regardless of primary controller type
     if (ctrl_cfg.driver_type != CONTROLLER_DRIVER_WIFI_TCP) {
