@@ -3,6 +3,7 @@
  * License: Apache-2.0
  */
 
+#include <stdint.h>
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -65,42 +66,171 @@ void gait_framework_main(void *arg)
     trajectory.max_yaw_per_cycle_rad = gait_cfg->max_yaw_per_cycle_rad;
     trajectory.turn_direction = gait_cfg->turn_direction;
 
-    const float dt = 0.01f; // 10ms loop
+    // Nominal loop cadence. dt is measured per-iteration below (see loop) so the
+    // gait clock tracks wall time even if a cycle overruns; this is only the
+    // scheduling period fed to vTaskDelayUntil.
+    const TickType_t loop_period_ticks = pdMS_TO_TICKS(10); // 100 Hz target
+    ESP_LOGI(TAG, "gait loop: FreeRTOS tick %d Hz (portTICK_PERIOD_MS=%d), period %d tick(s); task core %d prio %d",
+             (int)configTICK_RATE_HZ, (int)portTICK_PERIOD_MS, (int)loop_period_ticks,
+             (int)xPortGetCoreID(), (int)uxTaskPriorityGet(NULL));
+    if (loop_period_ticks < 1) {
+        ESP_LOGW(TAG, "tick rate too low for a sub-10ms period; loop will run slower than 100 Hz");
+    }
+
+    TickType_t last_wake_ticks = xTaskGetTickCount();
+    int64_t prev_cycle_us = esp_timer_get_time();
+
+    // --- Loop-rate diagnostics ---------------------------------------------
+    // Accumulate per-iteration timing and dump a summary once every 5 s:
+    //   - busy:   compute time of one iteration (locomotion -> actuation), no wait
+    //   - period: wall time between consecutive iteration starts (actual cadence)
+    // plus the RS485 bus master's own sweep/transaction counters, so leg update
+    // rate and main-loop rate can be compared side by side.
+    const int64_t DIAG_WINDOW_US = 5 * 1000 * 1000;
+    int64_t diag_window_start_us = esp_timer_get_time();
+    int64_t diag_prev_iter_us    = diag_window_start_us;
+    uint32_t diag_iters          = 0;
+    int64_t  diag_busy_total_us  = 0;
+    int64_t  diag_period_total_us = 0;
+    uint32_t diag_busy_min_us    = UINT32_MAX, diag_busy_max_us   = 0;
+    uint32_t diag_period_min_us  = UINT32_MAX, diag_period_max_us = 0;
+
+    // Per-phase breakdown of the "busy" time, so a slow stage can be spotted.
+    enum { PH_POLL, PH_SCHED, PH_SWING, PH_WBC, PH_KPPLIM, PH_EXEC, PH_KPPUPD, PH_COUNT };
+    static const char *const ph_name[PH_COUNT] = {
+        "poll", "sched", "swing", "wbc", "kpp_lim", "exec", "kpp_upd"
+    };
+    int64_t  ph_total_us[PH_COUNT] = {0};
+    uint32_t ph_max_us[PH_COUNT]   = {0};
+    #define DIAG_PHASE(idx, stmt) do {                                  \
+        int64_t _p0 = esp_timer_get_time();                             \
+        stmt;                                                           \
+        int64_t _pd = esp_timer_get_time() - _p0;                       \
+        ph_total_us[idx] += _pd;                                        \
+        if (_pd > ph_max_us[idx]) ph_max_us[idx] = (uint32_t)_pd;       \
+    } while (0)
+
     while (1) {
-        float time_start = esp_timer_get_time();
+        int64_t iter_start_us = esp_timer_get_time();
+
+        // Measured timestep since the previous iteration. Clamped so a one-off
+        // stall (WiFi association, logging burst) can't fast-forward the gait or
+        // blow up the KPP velocity/accel estimates via a huge 1/dt.
+        float dt = (float)(iter_start_us - prev_cycle_us) / 1e6f;
+        prev_cycle_us = iter_start_us;
+        if (dt < 0.001f) dt = 0.001f;
+        if (dt > 0.05f)  dt = 0.05f;
+
         // Copy current to previous then poll new
         prev_cmd = ucmd;
-        user_command_poll(&ucmd);
+        DIAG_PHASE(PH_POLL, user_command_poll(&ucmd));
         if (!controller_user_command_equal(&prev_cmd, &ucmd, 1e-2f)) {
             ESP_LOGI(TAG, "User command: vx=%.2f, wz=%.2f, z_target=%.2f, y_offset=%.2f gait=%d enable=%d pose=%d terrain=%d step_scale=%.2f",
                     ucmd.vx, ucmd.wz, ucmd.z_target, ucmd.y_offset, ucmd.gait, ucmd.enable, ucmd.pose_mode, ucmd.terrain_climb, ucmd.step_scale);
         }
 
-        // Update gait scheduler (leg phases)
-        gait_scheduler_update(&scheduler, dt, &ucmd);
-        // Generate swing trajectories for legs using scheduler + command
-        swing_trajectory_generate(&trajectory, &scheduler, &ucmd);
-        // Compute joint commands from trajectories
-        whole_body_control_compute(&trajectory, &cmds);
-        
-        // KPP: Apply motion limiting for smooth servo operation
         whole_body_cmd_t limited_cmds;
-        kpp_apply_limits(&kpp_state, &motion_limits, &cmds, &limited_cmds, dt);
-        
+        // Update gait scheduler (leg phases)
+        DIAG_PHASE(PH_SCHED, gait_scheduler_update(&scheduler, dt, &ucmd));
+        // Generate swing trajectories for legs using scheduler + command
+        DIAG_PHASE(PH_SWING, swing_trajectory_generate(&trajectory, &scheduler, &ucmd));
+        // Compute joint commands from trajectories
+        DIAG_PHASE(PH_WBC, whole_body_control_compute(&trajectory, &cmds));
+        // KPP: Apply motion limiting for smooth servo operation
+        DIAG_PHASE(PH_KPPLIM, kpp_apply_limits(&kpp_state, &motion_limits, &cmds, &limited_cmds, dt));
         // Send limited commands to robot
-        robot_execute(&limited_cmds);
-        
+        DIAG_PHASE(PH_EXEC, robot_execute(&limited_cmds));
         // CRITICAL FIX: Update state estimation based on ORIGINAL commands, not limited ones
         // This breaks the feedback loop that was causing oscillations
-        kpp_update_state(&kpp_state, &cmds, dt);  // Use original commands for state estimation
-        
-        float time_end = esp_timer_get_time();
-        // Calculate how long to wait to maintain dt period
-        float elapsed = (time_end - time_start) / 1000.0f;
-        float wait_ms = (dt * 1000.0f) - elapsed;
-        int wait_ticks = (int)(wait_ms / portTICK_PERIOD_MS);
-        if (wait_ticks < 1) wait_ticks = 1; // Ensure at least 1 tick
-        vTaskDelay(wait_ticks);
+        DIAG_PHASE(PH_KPPUPD, kpp_update_state(&kpp_state, &cmds, dt));  // original commands for state estimation
+
+        // --- Loop-rate diagnostics: accumulate this iteration ---
+        int64_t iter_busy_us = esp_timer_get_time() - iter_start_us;
+        int64_t iter_period_us = iter_start_us - diag_prev_iter_us;
+        diag_prev_iter_us = iter_start_us;
+        diag_iters++;
+        diag_busy_total_us += iter_busy_us;
+        if (iter_busy_us < diag_busy_min_us) diag_busy_min_us = (uint32_t)iter_busy_us;
+        if (iter_busy_us > diag_busy_max_us) diag_busy_max_us = (uint32_t)iter_busy_us;
+        if (diag_iters > 1) { // first period spans init, skip it
+            diag_period_total_us += iter_period_us;
+            if (iter_period_us < diag_period_min_us) diag_period_min_us = (uint32_t)iter_period_us;
+            if (iter_period_us > diag_period_max_us) diag_period_max_us = (uint32_t)iter_period_us;
+        }
+
+        if (iter_start_us - diag_window_start_us >= DIAG_WINDOW_US) {
+            // Stats keep accumulating every iteration; only the 5 s dump below is
+            // gated off. Emitting these lines pushes ~300 bytes over the 115200
+            // console UART, which blocks this task for 10-20 ms and shows up as a
+            // period spike. Flip DIAG_LOG_ENABLED to 1 for a bring-up session.
+            #define DIAG_LOG_ENABLED 0
+
+            // Drain the bus counters regardless, so they don't grow unbounded.
+            rs485_master_stats_t bus;
+            rs485_master_get_stats(&bus);
+
+            if (DIAG_LOG_ENABLED) {
+                float win_s = (iter_start_us - diag_window_start_us) / 1e6f;
+                uint32_t pcount = (diag_iters > 1) ? (diag_iters - 1) : 1;
+                ESP_LOGI(TAG,
+                    "loop: %.1f Hz (%lu iters/%.1fs) | busy avg %.2f max %.2f min %.2f ms | period avg %.2f max %.2f min %.2f ms",
+                    diag_iters / win_s, (unsigned long)diag_iters, win_s,
+                    diag_busy_total_us / 1000.0f / diag_iters,
+                    diag_busy_max_us / 1000.0f, diag_busy_min_us / 1000.0f,
+                    diag_period_total_us / 1000.0f / pcount,
+                    diag_period_max_us / 1000.0f, diag_period_min_us / 1000.0f);
+
+                if (bus.sweeps > 0) {
+                    uint32_t ok = 0, to = 0;
+                    for (int i = 0; i < NUM_LEGS; ++i) { ok += bus.leg_ok[i]; to += bus.leg_timeout[i]; }
+                    ESP_LOGI(TAG,
+                        "bus: %.1f leg-updates/s (%lu sweeps) | sweep avg %.2f max %.2f min %.2f ms | txn avg %.0f max %lu min %lu us | ok %lu timeout %lu",
+                        bus.sweeps / win_s, (unsigned long)bus.sweeps,
+                        bus.sweep_total_us / 1000.0f / bus.sweeps,
+                        bus.sweep_max_us / 1000.0f, bus.sweep_min_us / 1000.0f,
+                        bus.txn_count ? (float)bus.txn_total_us / bus.txn_count : 0.0f,
+                        (unsigned long)bus.txn_max_us, (unsigned long)bus.txn_min_us,
+                        (unsigned long)ok, (unsigned long)to);
+                    if (to > 0) {
+                        ESP_LOGW(TAG,
+                            "bus timeouts per leg: L1=%lu L2=%lu L3=%lu L4=%lu L5=%lu L6=%lu",
+                            (unsigned long)bus.leg_timeout[0], (unsigned long)bus.leg_timeout[1],
+                            (unsigned long)bus.leg_timeout[2], (unsigned long)bus.leg_timeout[3],
+                            (unsigned long)bus.leg_timeout[4], (unsigned long)bus.leg_timeout[5]);
+                    }
+                } else {
+                    ESP_LOGW(TAG, "bus: RS485 master completed no sweeps this window (task stalled?)");
+                }
+
+                char phbuf[192];
+                int off = 0;
+                for (int p = 0; p < PH_COUNT; ++p) {
+                    off += snprintf(phbuf + off, sizeof(phbuf) - off, "%s%s %.2f/%.2f",
+                                    p ? " | " : "", ph_name[p],
+                                    ph_total_us[p] / 1000.0f / diag_iters,
+                                    ph_max_us[p] / 1000.0f);
+                    if (off >= (int)sizeof(phbuf)) break;
+                }
+                ESP_LOGI(TAG, "phase avg/max ms: %s", phbuf);
+            }
+            (void)bus;
+
+            diag_window_start_us = iter_start_us;
+            diag_iters = 0;
+            diag_busy_total_us = diag_period_total_us = 0;
+            diag_busy_min_us = diag_period_min_us = UINT32_MAX;
+            diag_busy_max_us = diag_period_max_us = 0;
+            memset(ph_total_us, 0, sizeof(ph_total_us));
+            memset(ph_max_us, 0, sizeof(ph_max_us));
+        }
+
+        // Hold a fixed cadence. If the cycle overran the period, xTaskDelayUntil
+        // returns immediately (pdFALSE) without blocking -- in that case yield one
+        // tick anyway so the idle task runs and the task watchdog stays happy.
+        if (xTaskDelayUntil(&last_wake_ticks, loop_period_ticks) == pdFALSE) {
+            last_wake_ticks = xTaskGetTickCount();
+            vTaskDelay(1);
+        }
     }
 }
 
@@ -237,5 +367,17 @@ void app_main(void)
         controller_driver_init_wifi_tcp(&wifi_ctrl_cfg);
     }
     
-    gait_framework_main(NULL);
+    // Run the 100 Hz locomotion loop in its own task pinned to APP_CPU (core 1).
+    // Priority 14: above the controller driver (~8), below the RS485 bus master
+    // (prio 15, also core 1 -- its per-leg read window is timing-critical) and
+    // below the WiFi/BT stack on core 0. Previously this ran inline in the prio-1
+    // main task, where every other subsystem preempted it -- the measured loop
+    // rate was ~45 Hz with 40-90 ms period spikes and ~11 ms "busy" time.
+    BaseType_t gait_ok = xTaskCreatePinnedToCore(
+        gait_framework_main, "gait", 8192, NULL, 14, NULL, 1);
+    if (gait_ok != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create gait task");
+        return;
+    }
+    // app_main returns; the main task self-deletes and FreeRTOS keeps running.
 }

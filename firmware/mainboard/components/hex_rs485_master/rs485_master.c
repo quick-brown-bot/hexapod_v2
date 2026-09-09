@@ -47,6 +47,7 @@ typedef struct {
 
 static leg_command_t   s_cmd[NUM_LEGS];
 static leg_telemetry_t s_tlm[NUM_LEGS];
+static rs485_master_stats_t s_stats;   // accumulated since last rs485_master_get_stats()
 static SemaphoreHandle_t s_lock;
 static bool s_started = false;
 
@@ -180,6 +181,7 @@ static int read_line(char *buf, size_t buf_sz, int timeout_ms)
 // Runs one full request-response transaction with leg `idx` (0-based).
 static void poll_leg(int idx)
 {
+    int64_t txn_t0 = esp_timer_get_time();
     char frame[RS485_LINE_MAX];
     int flen = build_pull_frame(idx, frame, sizeof(frame));
     if (flen < 0) {
@@ -202,6 +204,8 @@ static void poll_leg(int idx)
     leg_telemetry_t t = {0};
     bool ok = (llen > 0) && parse_response(idx, line, &t);
 
+    uint32_t txn_us = (uint32_t)(esp_timer_get_time() - txn_t0);
+
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (ok) {
         s_tlm[idx] = t;
@@ -210,10 +214,16 @@ static void poll_leg(int idx)
             s_cmd[idx].param_pending[p] = false;
         }
         s_cmd[idx].request_positions = false;
+        s_stats.leg_ok[idx]++;
     } else {
         // Mark stale; leave pending config queued for the next pull.
         s_tlm[idx].stale = true;
+        s_stats.leg_timeout[idx]++;
     }
+    s_stats.txn_count++;
+    s_stats.txn_total_us += txn_us;
+    if (s_stats.txn_min_us == 0 || txn_us < s_stats.txn_min_us) s_stats.txn_min_us = txn_us;
+    if (txn_us > s_stats.txn_max_us) s_stats.txn_max_us = txn_us;
     xSemaphoreGive(s_lock);
 
     if (!ok) {
@@ -226,9 +236,17 @@ static void rs485_master_task(void *arg)
     (void)arg;
     ESP_LOGI(TAG, "RS485 master task started (UART%d, %d baud)", RS485_UART_PORT, RS485_BAUD);
     while (1) {
+        int64_t sweep_t0 = esp_timer_get_time();
         for (int i = 0; i < NUM_LEGS; ++i) {
             poll_leg(i);
         }
+        uint32_t sweep_us = (uint32_t)(esp_timer_get_time() - sweep_t0);
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        s_stats.sweeps++;
+        s_stats.sweep_total_us += sweep_us;
+        if (s_stats.sweep_min_us == 0 || sweep_us < s_stats.sweep_min_us) s_stats.sweep_min_us = sweep_us;
+        if (sweep_us > s_stats.sweep_max_us) s_stats.sweep_max_us = sweep_us;
+        xSemaphoreGive(s_lock);
         // Yield briefly so a full sweep does not starve lower-priority tasks.
         // A sweep is ~4-6 ms; one tick keeps the cadence near the 100 Hz loop.
         vTaskDelay(1);
@@ -268,7 +286,13 @@ esp_err_t rs485_master_init(void)
     err = uart_set_mode(RS485_UART_PORT, UART_MODE_RS485_HALF_DUPLEX);
     if (err != ESP_OK) { ESP_LOGE(TAG, "uart_set_mode: %s", esp_err_to_name(err)); return err; }
 
-    BaseType_t ok = xTaskCreate(rs485_master_task, "rs485_master", 4096, NULL, 9, NULL);
+    // Priority 15 / core 1: the per-leg response read window is only
+    // RS485_RESPONSE_TIMEOUT_MS, so this task must sit ABOVE the locomotion loop
+    // (gait task, prio 14 on core 1). It is almost always blocked in
+    // uart_read_bytes(), so it costs the gait loop only a brief preemption when a
+    // byte actually arrives. When it ran below the gait loop, sweeps were
+    // preempted mid-transaction and legs timed out in bursts.
+    BaseType_t ok = xTaskCreatePinnedToCore(rs485_master_task, "rs485_master", 4096, NULL, 15, NULL, 1);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "failed to create RS485 master task");
         return ESP_ERR_NO_MEM;
@@ -276,6 +300,15 @@ esp_err_t rs485_master_init(void)
 
     s_started = true;
     return ESP_OK;
+}
+
+void rs485_master_get_stats(rs485_master_stats_t *out)
+{
+    if (!out) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    *out = s_stats;
+    memset(&s_stats, 0, sizeof(s_stats));
+    xSemaphoreGive(s_lock);
 }
 
 void rs485_master_set_leg_angles(int leg, float coxa_deg, float femur_deg, float tibia_deg)

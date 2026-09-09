@@ -43,6 +43,25 @@ typedef struct {
     int64_t last_update_us; // esp_timer timestamp of the last successful response
 } leg_telemetry_t;
 
+// Bus-master timing / health counters, accumulated since the last call to
+// rs485_master_get_stats(). Intended for a low-rate diagnostics logger.
+typedef struct {
+    uint32_t sweeps;                   // full six-leg sweeps completed in the window
+    uint32_t leg_ok[NUM_LEGS];         // successful transactions, per leg
+    uint32_t leg_timeout[NUM_LEGS];    // timed-out / invalid-response transactions, per leg
+    uint32_t txn_count;                // total transactions attempted (ok + timeout)
+    uint64_t txn_total_us;             // summed single-transaction wall time (for averaging)
+    uint32_t txn_min_us;               // fastest single transaction (0 = none recorded)
+    uint32_t txn_max_us;               // slowest single transaction
+    uint64_t sweep_total_us;           // summed full-sweep wall time (for averaging)
+    uint32_t sweep_min_us;             // fastest full sweep (0 = none recorded)
+    uint32_t sweep_max_us;             // slowest full sweep
+} rs485_master_stats_t;
+
+// Copy the accumulated bus statistics into *out, then zero the accumulators so
+// the next window starts fresh. Safe to call from any task.
+void rs485_master_get_stats(rs485_master_stats_t *out);
+
 // Stored-parameter IDs (see RS485_PROTOCOL.md "Stored Parameters").
 typedef enum {
     RS485_PARAM_MOVE_DURATION    = 0x01, // uint16 ms
