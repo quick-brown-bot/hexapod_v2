@@ -318,9 +318,12 @@ void app_main(void)
         .driver_cfg_size = 0,
     };
 
-    // Assign driver-specific configuration if needed
-    controller_flysky_ibus_cfg_t flysky_cfg;
-    controller_wifi_tcp_cfg_t wifi_tcp_cfg;
+    // Assign driver-specific configuration if needed. static: their address is
+    // stored in controller_core (g_cfg.driver_cfg) and read later by the driver
+    // task; app_main returns once the tasks are spawned, so an auto (stack)
+    // struct here would dangle.
+    static controller_flysky_ibus_cfg_t flysky_cfg;
+    static controller_wifi_tcp_cfg_t wifi_tcp_cfg;
     if (ctrl_cfg.driver_type == CONTROLLER_DRIVER_FLYSKY_IBUS) {
         flysky_cfg.uart_port = controller_cfg->flysky_uart_port;
         flysky_cfg.tx_gpio = controller_cfg->flysky_tx_gpio;

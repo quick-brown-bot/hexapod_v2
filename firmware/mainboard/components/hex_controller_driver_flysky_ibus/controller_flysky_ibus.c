@@ -21,17 +21,19 @@ static const char *TAG = "ctrl_flysky_ibus";
 static void flysky_task(void *arg)
 {
     (void)controller_internal_get_config(); // currently unused core params
-    // Attempt to fetch driver specific config, else fall back to internal defaults
+    // Copy the driver config into our own storage -- never alias the caller's
+    // pointer. controller_internal_get_driver_cfg() hands back whatever pointer
+    // app_main passed in (a stack struct), and app_main returns once the tasks
+    // are spawned, so that pointer dangles almost immediately.
     controller_flysky_ibus_cfg_t local_cfg;
-    const controller_flysky_ibus_cfg_t *cfg_drv = NULL;
     size_t sz = 0;
     const void *p = controller_internal_get_driver_cfg(&sz);
     if (p && sz == sizeof(controller_flysky_ibus_cfg_t)) {
-        cfg_drv = (const controller_flysky_ibus_cfg_t *)p;
+        local_cfg = *(const controller_flysky_ibus_cfg_t *)p;
     } else {
         local_cfg = controller_flysky_ibus_default();
-        cfg_drv = &local_cfg;
     }
+    const controller_flysky_ibus_cfg_t *cfg_drv = &local_cfg;
     // Configure UART driver
     uart_config_t uart_config = {
         .baud_rate = cfg_drv->baud_rate,
@@ -117,5 +119,9 @@ static void flysky_task(void *arg)
 void controller_driver_init_flysky_ibus(const controller_config_t *cfg)
 {
     (void)cfg; // already stored globally
-    xTaskCreate(flysky_task, "flysky_ibus", cfg->task_stack, NULL, cfg->task_prio, NULL);
+    // Pin to core 0 (PRO_CPU), with the other comms tasks and away from the
+    // locomotion loop + RS485 bus master, which own core 1 at higher priority.
+    // The reader must drain its UART RX buffer every ~7 ms to keep up with the
+    // iBUS frame rate.
+    xTaskCreatePinnedToCore(flysky_task, "flysky_ibus", cfg->task_stack, NULL, cfg->task_prio, NULL, 0);
 }
