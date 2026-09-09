@@ -11,6 +11,7 @@
 #include <math.h>
 
 #define IBUS_BUF_SIZE 64
+#define IBUS_FRAME_LEN 32
 static const char *TAG = "ctrl_flysky_ibus";
 
 #ifndef min
@@ -49,20 +50,43 @@ static void flysky_task(void *arg)
     TickType_t last_frame_tick = xTaskGetTickCount();
     controller_internal_set_connected(false);
     int channels = min(CONTROLLER_MAX_CHANNELS, 14); // iBUS provides up to 14 channels
+
+    // Standard iBUS frame: 0x20 0x40, then 14 little-endian u16 channels, then
+    // a little-endian u16 checksum = 0xFFFF - sum(first 30 bytes). 32 bytes,
+    // ~one every 7 ms. A UART read almost never lands on a frame boundary, so
+    // feed bytes through a small resync state machine rather than assuming
+    // data[0] is the header.
+    uint8_t frame[IBUS_FRAME_LEN];
+    int fill = 0;
+
     while (1) {
         const TickType_t timeout_ticks = pdMS_TO_TICKS(20);
         int len = uart_read_bytes(cfg_drv->uart_port, data, sizeof(data), timeout_ticks);
         TickType_t now_tick = xTaskGetTickCount();
-        if (len >= 32) {
-            if (data[0] == 0x20 && data[1] == 0x40) {
+
+        for (int k = 0; k < len; ++k) {
+            uint8_t b = data[k];
+            if (fill == 0) {
+                if (b == 0x20) frame[fill++] = b;
+            } else if (fill == 1) {
+                if (b == 0x40) frame[fill++] = b;
+                else fill = (b == 0x20) ? 1 : 0;  // re-anchor on a fresh 0x20
+            } else {
+                frame[fill++] = b;
+                if (fill < IBUS_FRAME_LEN) continue;
+                fill = 0;
+
+                uint16_t sum = 0;
+                for (int i = 0; i < IBUS_FRAME_LEN - 2; ++i) sum += frame[i];
+                uint16_t want = (uint16_t)0xFFFF - sum;
+                uint16_t got = (uint16_t)(frame[30] | (frame[31] << 8));
+                if (want != got) continue;  // corrupt frame -- wait for the next
+
                 int16_t local[CONTROLLER_MAX_CHANNELS];
-                // First 14 channels from iBUS (or as many as frame provides)
                 for (int i = 0; i < channels; ++i) {
-                    uint16_t raw = (uint16_t)(data[2 + i*2] | (data[3 + i*2] << 8)); // 1000..2000 typical
+                    uint16_t raw = (uint16_t)(frame[2 + i*2] | (frame[3 + i*2] << 8)); // 1000..2000 us
                     if (raw < 1000) raw = 1000;
                     if (raw > 2000) raw = 2000;
-                    // Scale 1000..2000 -> -32768..32767
-                    // normalized = (raw-1500)/500 => -1..1 then *32767
                     float norm = ((float)raw - 1500.0f) / 500.0f; // -1..+1
                     if (norm < -1.0f) norm = -1.0f;
                     if (norm > 1.0f) norm = 1.0f;
@@ -71,9 +95,8 @@ static void flysky_task(void *arg)
                     if (sv > 32767) sv = 32767;
                     local[i] = (int16_t)sv;
                 }
-                
-                controller_internal_update_channels(local);
 
+                controller_internal_update_channels(local);
                 last_frame_tick = now_tick;
                 if (!controller_internal_is_connected()) {
                     controller_internal_set_connected(true);
