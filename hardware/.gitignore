@@ -85,6 +85,7 @@ Thumbs.db
 # KiCad footprint cache
 fp-info-cache
 
-# FreeCAD final models
+# FreeCAD final models / mesh exports
 *.step
 *.stl
+*.3mf
