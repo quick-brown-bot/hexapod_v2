@@ -18,13 +18,19 @@ This file helps coding agents become productive quickly in this repository.
 
 ## Build, flash, and test
 
-Run from repository root in an ESP-IDF-enabled environment:
+Run from `firmware/mainboard/` in an ESP-IDF-enabled environment:
 
 ```bash
 idf.py build
 idf.py flash
 idf.py monitor
 ```
+
+`idf.py` is the canonical toolchain (docs and CI assume it). A committed
+`platformio.ini` in this directory wraps the same ESP-IDF project
+(`framework = espidf`, `src_dir = main`), so `pio run` / `pio run -t upload`
+produce identical firmware by invoking ESP-IDF under the hood — use it only
+if you are already in a PlatformIO setup.
 
 Host-side integration tests:
 

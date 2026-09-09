@@ -42,6 +42,11 @@ idf.py flash
 idf.py monitor
 ```
 
+`idf.py` is the canonical path. The committed `platformio.ini` here also
+wraps this ESP-IDF project (`framework = espidf`), so `pio run` /
+`pio run -t upload` build the same firmware via ESP-IDF if you already have
+PlatformIO set up for the leg toolchain.
+
 ## Host-Side Tests
 
 Install requirements:

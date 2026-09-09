@@ -28,7 +28,8 @@ FreeRTOS task, decoupled from the 100 Hz locomotion loop.
 
 ```
 firmware/
-  mainboard/            ESP32 firmware, ESP-IDF. The main robot brain.
+  mainboard/            ESP32 firmware, ESP-IDF (idf.py; a platformio.ini
+                        wrapper also builds it). The main robot brain.
   leg/                  RP2040 firmware, PlatformIO. Runs on every LegBoard.
   mainboard_rs485_test/ Standalone ESP-IDF app for RS485 bring-up/benchmarking
                         (not part of the mainboard build).
@@ -105,6 +106,12 @@ idf.py build && idf.py flash && idf.py monitor
 pip install -r test/requirements.txt
 python -m pytest -q -p no:embedded test/test_config_general_listing.py   # host-side RPC/config tests, single module
 ```
+
+`idf.py` is canonical (what the docs and CI assume). A committed
+`firmware/mainboard/platformio.ini` also wraps the same ESP-IDF project
+(`framework = espidf`, `src_dir = main`), so `pio run` / `pio run -t upload`
+build the identical firmware by driving ESP-IDF underneath — a convenience
+for anyone already set up with PlatformIO for the leg toolchain.
 
 Leg (from `firmware/leg/`, PlatformIO):
 ```bash

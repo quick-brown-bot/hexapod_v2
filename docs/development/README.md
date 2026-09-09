@@ -54,6 +54,14 @@ Setup:
 2. Install the ESP-IDF VS Code extension.
 3. Configure the extension with the ESP-IDF tools path and Python environment.
 
+`idf.py` is the canonical toolchain for this board and the one the bring-up
+sequence and host tests assume. `firmware/mainboard/` also carries a
+committed `platformio.ini` (`framework = espidf`, `src_dir = main`) that
+builds the identical ESP-IDF project via `pio run` / `pio run --target
+upload` — handy if you already have PlatformIO installed for the leg, but it
+does not remove the ESP-IDF requirement (PlatformIO drives `idf.py`
+underneath).
+
 ### Leg — RP2040 (PlatformIO + arduino-pico)
 
 - PlatformIO with the VS Code PlatformIO extension
@@ -103,6 +111,9 @@ idf.py build
 idf.py flash
 idf.py monitor
 ```
+
+(Equivalently, `pio run` / `pio run --target upload` / `pio device monitor`
+via the committed `platformio.ini` — same ESP-IDF build.)
 
 The serial monitor shows boot logs, RS485 master task status, and any leg
 communication events. Keep it open during RS485 bring-up.
