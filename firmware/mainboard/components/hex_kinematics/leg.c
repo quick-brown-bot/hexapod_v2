@@ -96,3 +96,31 @@ esp_err_t leg_ik_solve(leg_handle_t handle, float x, float y, float z, leg_angle
     out_angles->tibia = tibia;
     return ESP_OK;
 }
+
+esp_err_t leg_ik_solve_body(leg_handle_t handle,
+                            float mount_x, float mount_y, float mount_z, float mount_yaw,
+                            float x_body, float y_body, float z_body,
+                            float out_leg_xyz[3], leg_angles_t *out_angles)
+{
+    if (!handle || !out_angles) return ESP_ERR_INVALID_ARG;
+
+    // Translate the body-frame target to this leg's hip origin.
+    float px = x_body - mount_x;
+    float py = y_body - mount_y;
+    float pz = z_body - mount_z;
+
+    // Rotate by -mount_yaw so body axes (X forward, Y left) align with the
+    // leg-local frame leg_ik_solve() expects (X outward, Y forward). Must stay
+    // identical to whole_body_control_compute()'s transform.
+    float c = cosf(-mount_yaw), s = sinf(-mount_yaw);
+    float x_leg = c * px - s * py; // outward
+    float y_leg = s * px + c * py; // forward
+    float z_leg = pz;              // up (unchanged by yaw)
+
+    if (out_leg_xyz) {
+        out_leg_xyz[0] = x_leg;
+        out_leg_xyz[1] = y_leg;
+        out_leg_xyz[2] = z_leg;
+    }
+    return leg_ik_solve(handle, x_leg, y_leg, z_leg, out_angles);
+}

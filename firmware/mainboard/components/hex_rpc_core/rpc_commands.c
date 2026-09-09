@@ -15,6 +15,9 @@
  *   ik <leg 1-6> <x_m> <y_m> <z_m>  -- leg-local Cartesian foot target -> IK -> per-leg
  *                                       joint override (same override as `joint`, so
  *                                       `joint <leg> release` also releases an `ik` set leg)
+ *   foot <leg 1-6> <x_m> <y_m> <z_m>  -- body-frame foot target (X fwd, Y left, Z up) run
+ *                                        through the gait's body->leg transform + IK; reports
+ *                                        the intermediate leg-local target. Same override.
  *   pos <leg 1-6>  -- request + read back this leg's actual reported joint angles over
  *                     RS485 (ground truth for what the LegBoard did, vs. what was sent)
  */
@@ -148,7 +151,7 @@ static int tokenize(char *line, char *argv[], int max_args) {
 }
 
 static void cmd_help(void) {
-	rpc_send("Commands: get set setpersist export factory-reset save list help version joint ik pos");
+	rpc_send("Commands: get set setpersist export factory-reset save list help version joint ik foot pos");
 }
 
 // Clamps a commanded joint angle (degrees) to this leg/joint's namespace-backed
@@ -244,6 +247,60 @@ static void cmd_ik(int argc, char *argv[]) {
     robot_set_leg_joint_override_deg(leg, coxa_deg, femur_deg, tibia_deg);
     rpc_send("ik %d: target=(%.3f,%.3f,%.3f) -> coxa=%.1f femur=%.1f tibia=%.1f",
               leg_1based, x, y, z, coxa_deg, femur_deg, tibia_deg);
+}
+
+// Body-frame counterpart of `ik`: takes a foot target in the robot body frame
+// (X forward (+), Y left (+), Z up (+)) and runs it through the exact same
+// transform + IK path the gait uses (whole_body_control_compute -> the shared
+// leg_ik_solve_body helper), then applies it as a per-leg override. Reports the
+// intermediate leg-local target so you can check the body->leg axis mapping for
+// one leg in isolation -- e.g. `foot 1 <mount_x> <mount_y> <z>` puts the foot on
+// the leg's own radial axis, then stepping x_body should move it purely fore/aft.
+// Same override as `joint`/`ik`, so `joint <leg> release` releases it too.
+static void cmd_foot(int argc, char *argv[]) {
+    if (argc < 5) {
+        rpc_send("usage: foot <leg 1-6> <x_m> <y_m> <z_m>  (body frame: X fwd, Y left, Z up)");
+        return;
+    }
+    int leg_1based = (int)strtol(argv[1], NULL, 10);
+    int leg = leg_1based - 1;
+    if (leg < 0 || leg >= NUM_LEGS) {
+        rpc_send("foot: leg out of range (1-%d)", NUM_LEGS);
+        return;
+    }
+
+    leg_handle_t handle = robot_config_get_leg(leg);
+    if (!handle) {
+        rpc_send("foot: leg %d has no configured IK handle", leg_1based);
+        return;
+    }
+
+    float x = strtof(argv[2], NULL);
+    float y = strtof(argv[3], NULL);
+    float z = strtof(argv[4], NULL);
+
+    float mx, my, mz, myaw;
+    robot_config_get_base_pose(leg, &mx, &my, &mz, &myaw);
+
+    float leg_xyz[3];
+    leg_angles_t angles;
+    esp_err_t err = leg_ik_solve_body(handle, mx, my, mz, myaw, x, y, z, leg_xyz, &angles);
+    if (err != ESP_OK) {
+        rpc_send("foot: leg_ik_solve_body failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    float coxa_deg, femur_deg, tibia_deg;
+    if (!clamp_to_joint_cal_deg(leg, LEG_SERVO_COXA, rad_to_deg_rpc(angles.coxa), &coxa_deg) ||
+        !clamp_to_joint_cal_deg(leg, LEG_SERVO_FEMUR, rad_to_deg_rpc(angles.femur), &femur_deg) ||
+        !clamp_to_joint_cal_deg(leg, LEG_SERVO_TIBIA, rad_to_deg_rpc(angles.tibia), &tibia_deg)) {
+        rpc_send("foot %d: joint_cal unavailable for this leg", leg_1based);
+        return;
+    }
+    robot_set_leg_joint_override_deg(leg, coxa_deg, femur_deg, tibia_deg);
+    rpc_send("foot %d: body=(%.3f,%.3f,%.3f) mount=(%.3f,%.3f,%.3f,yaw%.1f) -> leg=(%.3f,%.3f,%.3f) -> coxa=%.1f femur=%.1f tibia=%.1f",
+              leg_1based, x, y, z, mx, my, mz, rad_to_deg_rpc(myaw),
+              leg_xyz[0], leg_xyz[1], leg_xyz[2], coxa_deg, femur_deg, tibia_deg);
 }
 
 // Requests fresh joint-position telemetry from this leg over RS485 and
@@ -492,6 +549,7 @@ static void rpc_execute_line(char *line) {
 	else if (strcmp(argv[0], "factory-reset")==0) { cmd_factory_reset(); }
 	else if (strcmp(argv[0], "joint")==0) { cmd_joint(argc, argv); }
 	else if (strcmp(argv[0], "ik")==0) { cmd_ik(argc, argv); }
+	else if (strcmp(argv[0], "foot")==0) { cmd_foot(argc, argv); }
 	else if (strcmp(argv[0], "pos")==0) { cmd_pos(argc, argv); }
 	else { rpc_send("unknown: %s", argv[0]); }
 }

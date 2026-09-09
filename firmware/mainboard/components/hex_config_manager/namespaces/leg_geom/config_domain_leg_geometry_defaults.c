@@ -14,10 +14,10 @@ void config_load_leg_geometry_defaults(leg_geometry_config_t* config) {
     const float default_len_femur = 0.080f; // this hexapod version's actual femur length
     const float default_len_tibia = 0.127f;
 
-    const float x_off_front = 0.08f;
-    const float x_off_rear = -0.08f;
-    const float y_off_left = 0.05f;
-    const float y_off_right = -0.05f;
+    const float x_off_front = 0.07f;   // body-frame X half-spread front/rear (was 0.08)
+    const float x_off_rear = -0.07f;
+    const float y_off_left = 0.11f;    // body-frame Y half-spread left/right (was 0.05)
+    const float y_off_right = -0.11f;
     const float z_off = 0.0f;
     const float yaw_left = (float)M_PI * 0.5f;
     const float yaw_right = (float)-M_PI * 0.5f;

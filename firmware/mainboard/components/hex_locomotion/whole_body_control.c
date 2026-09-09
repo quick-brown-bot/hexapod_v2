@@ -24,25 +24,11 @@ void whole_body_control_compute(const swing_trajectory_t *trajectory, whole_body
         const foot_position_t *b = &trajectory->desired_positions[i];
         float x_body = b->x; // forward (+)
         float y_body = b->y; // left (+)
-        float z_body = b->z; // down (+)
+        float z_body = b->z; // up (+)
 
-        // Transform body-frame target to leg-local using mount pose (r_base, yaw).
+        // Transform body-frame target to leg-local using mount pose (position, yaw).
         float bx, by, bz, psi;
         robot_config_get_base_pose(i, &bx, &by, &bz, &psi);
-
-        // Translate to hip origin
-        float px = x_body - bx;
-        float py = y_body - by;
-        float pz = z_body - bz;
-        // ESP_LOGI(TAG, "Leg %d: Body (%.3f, %.3f, %.3f) -> Leg: (%.3f, %.3f, %.3f)", i, x_body, y_body, z_body, px, py, pz);
-
-        // Rotate by -yaw to align leg frame (X_leg outward, Y_leg forward, Z_leg down)
-        float c = cosf(-psi), s = sinf(-psi);
-        float x_leg = c * px - s * py; // outward
-        float y_leg = s * px + c * py; // forward
-        float z_leg = pz;              // down (unchanged for yaw rotation)
-
-        // ESP_LOGI(TAG, "Leg %d: Rotated Leg: (%.3f, %.3f, %.3f)", i, x_leg, y_leg, z_leg);
 
         // Look up per-leg IK geometry from robot_config.
         leg_handle_t leg = robot_config_get_leg(i);
@@ -56,11 +42,11 @@ void whole_body_control_compute(const swing_trajectory_t *trajectory, whole_body
 
         // Run IK to get joint angles for this foot target.
         leg_angles_t q;
-        if (leg_ik_solve(leg, x_leg, y_leg, z_leg, &q) == ESP_OK) {
+        if (leg_ik_solve_body(leg, bx, by, bz, psi, x_body, y_body, z_body, NULL, &q) == ESP_OK) {
             // Store actual joint angles (radians). Order: coxa, femur, tibia.
             // NOTE: Calibration offsets/limits are applied later in robot_control.
             // if (i != -1) {
-            //     ESP_LOGI(TAG, "(%lld)Leg %d IK: BodyXYZ(%.3f, %.3f, %.3f) -> LegXYZ(%.3f, %.3f, %.3f) -> LegAng(%.3f, %.3f, %.3f)", esp_timer_get_time(), i, x_body, y_body, z_body, x_leg, y_leg, z_leg, q.coxa, q.femur, q.tibia);
+            //     ESP_LOGI(TAG, "(%lld)Leg %d IK: BodyXYZ(%.3f, %.3f, %.3f) -> LegAng(%.3f, %.3f, %.3f)", esp_timer_get_time(), i, x_body, y_body, z_body, q.coxa, q.femur, q.tibia);
             // }
             cmds->joint_cmds[i].joint_angles[0] = q.coxa;
             cmds->joint_cmds[i].joint_angles[1] = q.femur;
@@ -68,7 +54,7 @@ void whole_body_control_compute(const swing_trajectory_t *trajectory, whole_body
         } else {
             // IK failed (out of reach, etc.). For now, fall back to zeros.
             // TODO: Add error signaling so robot_control can engage a safe stop.
-            ESP_LOGW(TAG, "Leg %d IK failed: BodyXYZ(%.3f, %.3f, %.3f) -> LegXYZ(%.3f, %.3f, %.3f) -> LegAng(0, 0, 0)", i, x_body, y_body, z_body, x_leg, y_leg, z_leg);
+            ESP_LOGW(TAG, "Leg %d IK failed: BodyXYZ(%.3f, %.3f, %.3f) -> LegAng(0, 0, 0)", i, x_body, y_body, z_body);
 
             cmds->joint_cmds[i].joint_angles[0] = 0.0f;
             cmds->joint_cmds[i].joint_angles[1] = 0.0f;

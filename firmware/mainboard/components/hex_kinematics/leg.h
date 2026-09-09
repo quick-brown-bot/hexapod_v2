@@ -75,6 +75,18 @@ typedef struct {
 // Returns ESP_OK on success and writes angles to out_angles (no clamping/offsets applied).
 esp_err_t leg_ik_solve(leg_handle_t leg, float x, float y, float z, leg_angles_t *out_angles);
 
+// Body-frame convenience wrapper around leg_ik_solve(): takes a foot target in
+// the robot body frame (X forward (+), Y left (+), Z up (+)) plus this leg's
+// mount pose (position in meters, yaw in radians about +Z), applies the exact
+// same translate + rotate(-yaw) transform the locomotion stack uses
+// (whole_body_control_compute), then solves IK. If out_leg_xyz is non-NULL it
+// receives the intermediate leg-local target [x_out, y_forward, z_up] -- useful
+// for bring-up / axis verification. Returns whatever leg_ik_solve() returns.
+esp_err_t leg_ik_solve_body(leg_handle_t leg,
+                            float mount_x, float mount_y, float mount_z, float mount_yaw,
+                            float x_body, float y_body, float z_body,
+                            float out_leg_xyz[3], leg_angles_t *out_angles);
+
 #ifdef __cplusplus
 }
 #endif
