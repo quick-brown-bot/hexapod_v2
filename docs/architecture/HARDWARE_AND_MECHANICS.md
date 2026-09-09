@@ -57,7 +57,21 @@ Firmware-relevant pin assignments:
 | RS485 DE | IO4 |
 | IMU SDA | IO21 |
 | IMU SCL | IO22 |
-| IMU INT | IO34 |
+| FlySky iBUS RX (UART1) | GPIO5 |
+
+There is no dedicated RC-receiver connector on the MainBoard yet. The FlySky
+iBUS signal is currently a flying-wire tap on the ESP32 module's **GPIO5**
+pad (board silk "D5"); the receiver is powered from a UBEC with its ground
+bonded to logic ground. Confirmed receiving valid iBUS frames with
+`firmware/mainboard_ibus_test`, and it is the `controller` namespace default
+`flysky_rx_gpio = 5`.
+
+GPIO5 is a boot-strapping pin, but iBUS idles high so a powered receiver
+does not disturb boot. Note "GPIO5" vs "GPIO34": ESP32 *package pin* 34 is
+GPIO5 -- chip-level pinout diagrams that box the package-pin number next to
+"GPIO5" are the source of a common mix-up. GPIO34 is a different, unused
+input-only pad. A proper 3-pin receiver header (5V / GND / signal) is a
+pending schematic change; if it lands on GPIO34 instead, update the default.
 
 ### LegBoard
 

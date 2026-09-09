@@ -20,12 +20,15 @@ typedef struct {
     int baud_rate;   // e.g., 115200
 } controller_flysky_ibus_cfg_t;
 
-// Provide a convenience inline default initializer
+// Convenience fallback initializer, used only if the bootstrap flow fails to
+// hand this driver its config. The authoritative values live in the
+// `controller` config namespace (config_domain_controller_defaults.c); keep
+// this mirror in sync with it -- notably rx_gpio = GPIO5.
 static inline controller_flysky_ibus_cfg_t controller_flysky_ibus_default(void) {
     controller_flysky_ibus_cfg_t c = {
         .uart_port = 1,   // UART_NUM_1
         .tx_gpio = -1,
-        .rx_gpio = 22,
+        .rx_gpio = 5,
         .rts_gpio = -1,
         .cts_gpio = -1,
         .baud_rate = 115200,
