@@ -43,9 +43,10 @@ void user_command_poll(user_command_t *cmd) {
         controller_decode(ch, &st);
         // Map to command per table
         cmd->vx = st.left_vert;   // scale to m/s elsewhere
+        cmd->vy = -st.right_horiz; // strafe: right stick right => strafe right => -Y
         cmd->wz = st.left_horiz;  // map to rad/s elsewhere
         cmd->z_target = st.right_vert; // normalized -1..1, map to meters later
-        cmd->y_offset = st.right_horiz;
+        cmd->y_offset = 0.0f;    // CH1 repurposed to strafe; no static shift from stick
         cmd->pose_mode = st.swb_pose;
         cmd->terrain_climb = st.swd_terrain;
         cmd->step_scale = st.sra_knob; // 0..1
@@ -61,6 +62,7 @@ void user_command_poll(user_command_t *cmd) {
         const controller_config_namespace_t *cfg = config_get_controller();
         if (cfg) {
             cmd->vx = cfg->failsafe_vx;
+            cmd->vy = 0.0f; // POC: no namespace-backed failsafe_vy yet
             cmd->wz = cfg->failsafe_wz;
             cmd->z_target = cfg->failsafe_z_target;
             cmd->y_offset = cfg->failsafe_y_offset;
@@ -79,6 +81,7 @@ void user_command_poll(user_command_t *cmd) {
             }
         } else {
             cmd->vx = 0.0f;
+            cmd->vy = 0.0f;
             cmd->wz = 0.0f;
             cmd->z_target = 0.0f;
             cmd->y_offset = 0.0f;

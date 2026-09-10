@@ -199,6 +199,7 @@ bool controller_user_command_equal(const user_command_t *a, const user_command_t
     }
     float eps = (tol > 0.0f) ? tol : CONTROLLER_CMD_FLOAT_EPSILON;
     if (!float_eq_eps(a->vx, b->vx, eps)) return false;
+    if (!float_eq_eps(a->vy, b->vy, eps)) return false;
     if (!float_eq_eps(a->wz, b->wz, eps)) return false;
     if (!float_eq_eps(a->z_target, b->z_target, eps)) return false;
     if (!float_eq_eps(a->y_offset, b->y_offset, eps)) return false;
