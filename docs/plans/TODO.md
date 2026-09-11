@@ -6,8 +6,8 @@
 
 Robot walks and all electronics work, but two mechanical issues are visibly
 limiting gait quality right now — higher near-term leverage than more
-software gait work until addressed. Filed as GH issue as well; see that
-issue for photos/video once attached.
+software gait work until addressed. Also filed as
+[GH issue #4](https://github.com/quick-brown-bot/hexapod_v2/issues/4).
 
 - [ ] **TPU foot tips ("shoes") to fix slipping**
   - Feet slip badly on the current surface/tips; robot loses traction during
