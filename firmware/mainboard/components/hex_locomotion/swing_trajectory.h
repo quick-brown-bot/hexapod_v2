@@ -31,9 +31,10 @@ typedef struct {
 
 void swing_trajectory_init(swing_trajectory_t *trajectory, float step_length, float clearance_height);
 // Generate desired foot positions using scheduler state and current user command
-// NOTE: This currently implements a simple cycloid swing and flat support.
-// TODO: Add yaw (wz) coupling to bias per-leg x/y for turning, and add
-//       terrain-dependent clearance shaping.
+// NOTE: This implements a cycloid vertical arc with a quintic (minimum-jerk)
+//       horizontal sweep during swing (zero velocity/acceleration at
+//       lift-off and touchdown) and flat support.
+// TODO: Add terrain-dependent clearance shaping.
 void swing_trajectory_generate(swing_trajectory_t *trajectory, const gait_scheduler_t *scheduler, const user_command_t *cmd);
 
 #endif // SWING_TRAJECTORY_H

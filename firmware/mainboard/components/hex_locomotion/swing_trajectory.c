@@ -29,6 +29,15 @@ static float fracf(float x) {
     return (f < 0.0f) ? (f + 1.0f) : f;
 }
 
+// Minimum-jerk (quintic) smoothstep: maps tau in [0,1] to [0,1] with zero
+// velocity AND zero acceleration at both endpoints. Used to shape the swing
+// foot's horizontal sweep so it touches down (and lifts off) at zero
+// relative velocity instead of the abrupt reversal a linear sweep produces
+// at the swing->support boundary (foot slip + servo shock at touchdown).
+static float quintic_smoothstep(float tau) {
+    return tau * tau * tau * (tau * (tau * 6.0f - 15.0f) + 10.0f);
+}
+
 void swing_trajectory_generate(swing_trajectory_t *trajectory, const gait_scheduler_t *scheduler, const user_command_t *cmd) {
     assert(trajectory != NULL);
     assert(scheduler != NULL);
@@ -103,10 +112,18 @@ void swing_trajectory_generate(swing_trajectory_t *trajectory, const gait_schedu
         // Cycloid-like arc for swing; flat for support. Step displacement runs
         // along the planar heading (dir_x, dir_y), so pure vx walks forward,
         // pure vy strafes, and a mix walks diagonally.
+        // Quintic (not linear) sweep for swing: zero horizontal velocity/
+        // acceleration at lift-off (tau=0) and touchdown (tau=1) avoids the
+        // instantaneous velocity reversal a linear sweep has at the
+        // swing->support boundary, which was causing foot slip and servo
+        // shock. Also used to shape the yaw-turn sweep below for the same
+        // reason.
+        float tau_q = swing ? quintic_smoothstep(tau) : tau;
+
         float disp; // signed offset along heading, -L/2 .. +L/2
         float z_rel; // Z up: 0 at stance, positive during lift
         if (swing) {
-            disp = (-0.5f + tau) * L;
+            disp = (-0.5f + tau_q) * L;
             z_rel =  clr * sinf((float)M_PI * tau); // peak at mid
         } else {
             // support: travel backward along heading at ground height
@@ -128,7 +145,7 @@ void swing_trajectory_generate(swing_trajectory_t *trajectory, const gait_schedu
             // Support legs move backward relative to body rotation, swing legs follow the rotation
             if (swing) {
                 // During swing, foot follows the body rotation
-                yaw_offset = yaw_rotation * tau;
+                yaw_offset = yaw_rotation * tau_q;
             } else {
                 // During support, foot moves backward relative to body rotation
                 yaw_offset = -yaw_rotation * tau;

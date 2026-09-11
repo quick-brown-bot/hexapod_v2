@@ -2,6 +2,33 @@
 
 ## 🎯 Project Vision & New Goals
 
+### Mechanical Improvements (observed on the built robot, 2026-09)
+
+Robot walks and all electronics work, but two mechanical issues are visibly
+limiting gait quality right now — higher near-term leverage than more
+software gait work until addressed. Filed as GH issue as well; see that
+issue for photos/video once attached.
+
+- [ ] **TPU foot tips ("shoes") to fix slipping**
+  - Feet slip badly on the current surface/tips; robot loses traction during
+    swing→stance transitions and while turning
+  - Design + print TPU (flexible filament) tip caps for each of the 6 foot
+    ends; needs a mounting interface (press-fit or small fastener) added to
+    the leg tip model in `hardware/models/`
+  - Expected to matter more than the quintic swing trajectory fix for
+    reducing visible slip — do this next and re-evaluate whether further
+    trajectory shaping is even still needed
+- [ ] **Coxa servo hinge play causing Z-axis sag**
+  - Coxa joints wobble/have play at the servo horn/hinge, letting the robot
+    sag in Z over time (settles lower as it walks); other joints contribute
+    smaller amounts of the same effect
+  - Needs a stiffer horn/hinge mechanical interface at the coxa (and
+    ideally an audit of femur/tibia joints too) — investigate horn coupling,
+    bearing support, or a fixed idler bearing opposite the servo output
+    shaft to remove the play instead of relying on the servo spline alone
+  - Needs mechanical design pass (`hardware/models/` FreeCAD) — not a
+    schematic/firmware change
+
 ### Hardware Improvements
 - [ ] **Touch sensors at each leg**
   - Research suitable force/pressure sensors for leg-ground contact detection
@@ -111,13 +138,17 @@ anchored to published research. Tiers reflect hardware dependency, not priority.
   - Ref: Ijspeert, A.J. (2008), "Central pattern generators for locomotion control in animals and robots: a review", *Neural Networks* 21(4):642-653
   - Ref: Righetti & Ijspeert (2008), "Pattern generators with sensory feedback for the control of quadruped locomotion", *IEEE ICRA*
 
-- [ ] **Minimum-impact swing foot trajectory (zero-velocity touchdown)**
-  - Current swing uses a sine vertical arc but a *linear* horizontal sweep
-    (`x_rel = (-0.5+tau)*L`, `swing_trajectory.c:98`), causing instantaneous
-    horizontal velocity reversal at touchdown → foot slip and servo shock
-  - Replace horizontal sweep with a quintic polynomial / Bézier giving zero
-    foot velocity and acceleration at lift-off and touchdown
-  - Overlaps existing "minimum-jerk / quintic foot trajectory" swing TODO
+- [x] **Minimum-impact swing foot trajectory (zero-velocity touchdown)** — done
+  on `quintic-swing-trajectory` branch
+  - Horizontal sweep during swing now uses a quintic (minimum-jerk)
+    smoothstep instead of linear `disp = (-0.5+tau)*L`
+    (`swing_trajectory.c`), giving zero foot velocity/acceleration at
+    lift-off and touchdown instead of an instantaneous reversal → should
+    reduce foot slip and servo shock. Same shaping applied to the yaw-turn
+    sweep. Vertical arc (sine) and support-phase motion unchanged.
+  - Needs on-robot validation: does slip/shock visibly improve? (partially
+    superseded as a fix for slip by the TPU feet item below — see
+    "Mechanical improvements" section)
   - Ref: Raibert, M. (1986), *Legged Robots That Balance*, MIT Press
   - Ref: Park, Wensing & Kim (2017), "High-speed bounding with the MIT Cheetah 2", *IJRR* 36(2):167-192 (swing-leg trajectory design)
 
