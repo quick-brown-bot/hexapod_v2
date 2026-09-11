@@ -33,12 +33,22 @@ void swing_trajectory_generate(swing_trajectory_t *trajectory, const gait_schedu
     assert(trajectory != NULL);
     assert(scheduler != NULL);
     assert(cmd != NULL);
-    // Normalize vx to [-1,1] (controller provides -1..1, but clamp for safety)
+    // Normalize planar velocity command to the unit disc (X forward, Y left).
+    // vx from left stick vertical, vy (strafe) from right stick horizontal.
     float vx_n = clampf(cmd->vx, -1.0f, 1.0f);
+    float vy_n = clampf(cmd->vy, -1.0f, 1.0f);
     // Normalize wz to [-1,1] for yaw turning command
     float wz_n = clampf(cmd->wz, -1.0f, 1.0f);
-    // scale step length by speed magnitude and user step_scale; zero when disabled
-    float speed_mag = fabsf(vx_n);
+    // Unit heading of the step + speed magnitude clamped to the unit disc, so a
+    // diagonal command doesn't get sqrt(2)x the step length. Defaults to +X when
+    // the command is ~zero.
+    float raw_mag = sqrtf(vx_n * vx_n + vy_n * vy_n);
+    float dir_x = 1.0f, dir_y = 0.0f;
+    if (raw_mag > 1e-6f) {
+        dir_x = vx_n / raw_mag;
+        dir_y = vy_n / raw_mag;
+    }
+    float speed_mag = clampf(raw_mag, 0.0f, 1.0f);
     float scale = clampf(cmd->step_scale, 0.0f, 1.0f);
     bool enabled = cmd->enable;
     if (!enabled) {
@@ -90,18 +100,21 @@ void swing_trajectory_generate(swing_trajectory_t *trajectory, const gait_schedu
         float tau = swing ? (p_i / S) : ((p_i - S) / (1.0f - S));
         tau = clampf(tau, 0.0f, 1.0f);
 
-        // Cycloid-like arc for swing; flat for support
-        float x_rel;
+        // Cycloid-like arc for swing; flat for support. Step displacement runs
+        // along the planar heading (dir_x, dir_y), so pure vx walks forward,
+        // pure vy strafes, and a mix walks diagonally.
+        float disp; // signed offset along heading, -L/2 .. +L/2
         float z_rel; // Z up: 0 at stance, positive during lift
         if (swing) {
-            // forward from -L/2 to +L/2 with vertical arc (positive Z lift)
-            x_rel = (-0.5f + tau) * L * (vx_n >= 0.0f ? 1.0f : -1.0f);
+            disp = (-0.5f + tau) * L;
             z_rel =  clr * sinf((float)M_PI * tau); // peak at mid
         } else {
-            // support: backward from +L/2 to -L/2 at ground height
-            x_rel = (0.5f - tau) * L * (vx_n >= 0.0f ? 1.0f : -1.0f);
+            // support: travel backward along heading at ground height
+            disp = (0.5f - tau) * L;
             z_rel = 0.0f;
         }
+        float x_rel = disp * dir_x;
+        float y_rel = disp * dir_y;
 
         // Convert offsets to absolute body-frame targets by adding each leg's base pose
         float bx, by, bz, yaw;
@@ -132,7 +145,7 @@ void swing_trajectory_generate(swing_trajectory_t *trajectory, const gait_schedu
         float dy_stance = sy * out_m + cy * fwd_m;
 
         p->x = bx + dx_stance + x_rel;
-        p->y = by + dy_stance + body_y;
+        p->y = by + dy_stance + y_rel + body_y;
         p->z = bz + body_z + z_rel; // Z up absolute
         
         // Debug logging for leg 0 to monitor turning behavior

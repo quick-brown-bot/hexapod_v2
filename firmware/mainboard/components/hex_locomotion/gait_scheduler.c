@@ -18,9 +18,10 @@ void gait_scheduler_update(gait_scheduler_t *scheduler, float dt, const user_com
     // Advance phase only when enabled and commanded velocity is non-zero
     // TODO: Consider separate forward/turning components and modulate phase rate by
     //       a base frequency parameter instead of reusing cycle_time directly.
-    if (cmd->enable && (fabsf(cmd->vx) > 1e-3f || fabsf(cmd->wz) > 1e-3f)) {
-        // crude frequency scaling: base 1/cycle_time Hz, scaled by step_scale and |vx|
-        float speed = (cmd->vx < 0.0f) ? -cmd->vx : cmd->vx; // use magnitude
+    float planar_speed = sqrtf(cmd->vx * cmd->vx + cmd->vy * cmd->vy);
+    if (cmd->enable && (planar_speed > 1e-3f || fabsf(cmd->wz) > 1e-3f)) {
+        // crude frequency scaling: base 1/cycle_time Hz, scaled by step_scale and planar speed
+        float speed = planar_speed; // combined forward+strafe magnitude
         float freq = (scheduler->cycle_time > 0.0f) ? (1.0f / scheduler->cycle_time) : 1.0f;
         float scale = (cmd->step_scale > 0.0f) ? cmd->step_scale : 0.5f;
         float phase_rate = freq * (0.5f + 0.5f * (speed > 1.0f ? 1.0f : speed)) * scale; // 0.5..1x based on speed

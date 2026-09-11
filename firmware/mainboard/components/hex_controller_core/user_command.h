@@ -13,10 +13,14 @@ typedef struct {
     // Command inputs (normalized from controller_decode unless otherwise noted)
     // motion (normalized -1..+1)
     float vx;       // forward command (from CH2 Left Vert), normalized -1..+1
+    float vy;       // strafe command (from CH1 Right Horiz), normalized -1..+1
+                    // body-frame Y (left +); right stick right => strafe right => negative
     float wz;       // yaw command (from CH4 Left Horiz), normalized -1..+1
     // body pose targets (normalized -1..+1); scale to meters in trajectory/WBC layer
     float z_target; // normalized body height target (from CH3 Right Vert)
-    float y_offset; // normalized lateral shift (from CH1 Right Horiz)
+    float y_offset; // normalized static lateral body shift; no stick source
+                    // anymore (CH1 Right Horiz was repurposed to vy/strafe),
+                    // only driven by failsafe profile
     // mode controls
     gait_type_t gait;
     bool enable;
