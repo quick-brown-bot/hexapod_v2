@@ -62,7 +62,12 @@ void user_command_poll(user_command_t *cmd) {
         const controller_config_namespace_t *cfg = config_get_controller();
         if (cfg) {
             cmd->vx = cfg->failsafe_vx;
-            cmd->vy = 0.0f; // POC: no namespace-backed failsafe_vy yet
+            // Strafe is intentionally not part of the failsafe profile: unlike
+            // vx/wz (which fail safe to a configured stop/turn), a sideways
+            // command with no live stick behind it has no safe non-zero
+            // value, so this is always 0 rather than a namespace-backed
+            // failsafe_vy.
+            cmd->vy = 0.0f;
             cmd->wz = cfg->failsafe_wz;
             cmd->z_target = cfg->failsafe_z_target;
             cmd->y_offset = cfg->failsafe_y_offset;

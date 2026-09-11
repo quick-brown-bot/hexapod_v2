@@ -18,6 +18,40 @@ Core separation:
 FlySky iBUS (1000..2000) is internally rescaled to this signed range for the first 14 channels; remaining channels are zeroed.
 Maintain consistency so decoding logic (deadband, normalization) remains transport‑agnostic.
 
+### 2.1 FlySky Stick Assignment (this robot)
+
+`controller_decode()` (`hex_controller_core/controller.c`) maps the first ten
+iBUS channels to `controller_state_t`; `user_command_poll()`
+(`hex_locomotion/user_command.c`) maps that to `user_command_t`, which the
+locomotion stack consumes:
+
+| CH | Physical control | `controller_state_t` field | `user_command_t` field | Meaning |
+|----|-------------------|------------------------------|--------------------------|---------|
+| 1  | Right stick, horizontal | `right_horiz` | `vy` (negated) | Strafe velocity, body-frame Y (left +); right = strafe right |
+| 2  | Left stick, vertical | `left_vert` | `vx` | Forward/back velocity, body-frame X |
+| 3  | Right stick, vertical | `right_vert` | `z_target` | Body height target |
+| 4  | Left stick, horizontal | `left_horiz` | `wz` | Yaw rate |
+| 5  | SWA | `swa_arm` | `enable` | Arm/disarm |
+| 7  | SWB | `swb_pose` | `pose_mode` | Pose mode (not yet consumed by `swing_trajectory`) |
+| 8  | SWC | `swc_gait` | `gait` | Gait select (TRIPOD/RIPPLE/WAVE, thirds of range) |
+| 9  | SWD | `swd_terrain` | `terrain_climb` | Terrain-climb clearance boost |
+| 10 | SRA knob | `sra_knob` | `step_scale` | Step length/frequency scale, 0..1 |
+
+`vx`, `vy`, and `wz` compose: the swing trajectory turns `(vx, vy)` into a
+single planar step heading (so a stick pushed diagonally walks diagonally,
+clamped to the unit disc rather than allowing a longer diagonal step), and
+`wz` yaw is summed on top independently — so strafe-while-turning works.
+Strafe only produces motion while the gait phase is advancing (i.e. while
+walking); there's no static/pose-mode lateral shift left on this axis.
+`y_offset` still exists as a `user_command_t` field for a static lateral
+body shift, but no stick drives it — it's zero from the FlySky driver and
+only reachable via the controller failsafe profile.
+
+Strafe is deliberately excluded from the failsafe profile: unlike `vx`/`wz`
+(which fail safe to a configured stop or turn), a sideways command with no
+live stick behind it has no safe non-zero value, so `vy` is hardcoded to 0
+on failsafe rather than being a namespace-backed `failsafe_vy`.
+
 ## 3. Driver Task Lifecycle
 
 Typical pattern inside driver file (e.g., `controller_wifi_tcp.c`):
