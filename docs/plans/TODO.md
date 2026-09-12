@@ -9,25 +9,18 @@ limiting gait quality right now — higher near-term leverage than more
 software gait work until addressed. Also filed as
 [GH issue #4](https://github.com/quick-brown-bot/hexapod_v2/issues/4).
 
-- [ ] **TPU foot tips ("shoes") to fix slipping**
+- [ ] **TPU foot tips ("shoes") to fix slipping** — in progress
   - Feet slip badly on the current surface/tips; robot loses traction during
     swing→stance transitions and while turning
-  - Design + print TPU (flexible filament) tip caps for each of the 6 foot
-    ends; needs a mounting interface (press-fit or small fastener) added to
-    the leg tip model in `hardware/models/`
-  - Expected to matter more than the quintic swing trajectory fix for
-    reducing visible slip — do this next and re-evaluate whether further
-    trajectory shaping is even still needed
-- [ ] **Coxa servo hinge play causing Z-axis sag**
-  - Coxa joints wobble/have play at the servo horn/hinge, letting the robot
-    sag in Z over time (settles lower as it walks); other joints contribute
-    smaller amounts of the same effect
-  - Needs a stiffer horn/hinge mechanical interface at the coxa (and
-    ideally an audit of femur/tibia joints too) — investigate horn coupling,
-    bearing support, or a fixed idler bearing opposite the servo output
-    shaft to remove the play instead of relying on the servo spline alone
-  - Needs mechanical design pass (`hardware/models/` FreeCAD) — not a
-    schematic/firmware change
+  - Foot tip added to the leg model in `hardware/models/hexapod_v2.FCStd`;
+    still needs printing in TPU, mounting, and on-robot slip validation
+    (also re-evaluate whether the quintic swing trajectory shaping is still
+    needed once tips are on)
+- [x] **Coxa servo hinge play causing Z-axis sag** — fixed for now (2026-09)
+  - Stiffened the coxa horn/hinge mechanical interface; needs to be
+    monitored for recurrence with continued use (wear, more running hours)
+    before calling it fully resolved. Femur/tibia joints not yet audited for
+    the same issue.
 
 ### Hardware Improvements
 - [ ] **Touch sensors at each leg**
