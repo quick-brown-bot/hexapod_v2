@@ -1,5 +1,6 @@
 #include "swing_trajectory.h"
 #include "gait_scheduler.h"
+#include "motion_math.h"
 #include <math.h>
 #include <stdbool.h>
 #include <assert.h>
@@ -18,24 +19,6 @@ void swing_trajectory_init(swing_trajectory_t *trajectory, float step_length, fl
         trajectory->desired_positions[i].y = 0.0f;
         trajectory->desired_positions[i].z = 0.0f;
     }
-}
-
-static inline float clampf(float v, float lo, float hi) {
-    return v < lo ? lo : (v > hi ? hi : v);
-}
-
-static float fracf(float x) {
-    float f = x - floorf(x);
-    return (f < 0.0f) ? (f + 1.0f) : f;
-}
-
-// Minimum-jerk (quintic) smoothstep: maps tau in [0,1] to [0,1] with zero
-// velocity AND zero acceleration at both endpoints. Used to shape the swing
-// foot's horizontal sweep so it touches down (and lifts off) at zero
-// relative velocity instead of the abrupt reversal a linear sweep produces
-// at the swing->support boundary (foot slip + servo shock at touchdown).
-static float quintic_smoothstep(float tau) {
-    return tau * tau * tau * (tau * (tau * 6.0f - 15.0f) + 10.0f);
 }
 
 void swing_trajectory_generate(swing_trajectory_t *trajectory, const gait_scheduler_t *scheduler, const user_command_t *cmd) {
@@ -75,32 +58,18 @@ void swing_trajectory_generate(swing_trajectory_t *trajectory, const gait_schedu
     float body_z = trajectory->z_min_m + 0.5f * (z_n + 1.0f) * (trajectory->z_max_m - trajectory->z_min_m);
     float body_y = clampf(cmd->y_offset, -1.0f, 1.0f) * trajectory->y_range_m; // meters
 
-    // Determine swing fraction S per gait (0 < S < 1)
-    float S;
-    switch (cmd->gait) {
-        case GAIT_RIPPLE: S = 1.0f / 3.0f; break;                   // two legs swing per 3 windows
-        case GAIT_WAVE:   S = 0.6f / (float)NUM_LEGS; break;         // ~0.1
-        case GAIT_TRIPOD: default: S = 0.5f; break;                  // balanced
-    }
+    // Swing fraction S (0 < S < 1) and per-leg phase offsets come from the
+    // gait scheduler's Wilson continuum (gait_scheduler_update()) - a single
+    // formula parameterized by commanded speed, replacing the old hardcoded
+    // per-gait offset tables here.
+    float S = scheduler->duty_factor;
     assert(S > 0.0f && S < 1.0f);
 
     float phase = scheduler->phase;
 
     for (int i = 0; i < NUM_LEGS; ++i) {
         foot_position_t *p = &trajectory->desired_positions[i];
-        float p_i; // local phase of the individual leg
-        if (cmd->gait == GAIT_TRIPOD) {
-            bool inA = (i == LEG_LEFT_FRONT || i == LEG_RIGHT_MIDDLE || i == LEG_LEFT_REAR);
-            float offset = inA ? 0.0f : 0.5f;
-            p_i = fracf(phase + offset);
-        } else if (cmd->gait == GAIT_RIPPLE) {
-            // RIPPLE: group by i%3 into three windows
-            float offset = (i % 3) / 3.0f; // 0, 1/3, 2/3
-            p_i = fracf(phase - offset);
-        } else {
-            // WAVE: evenly staggered by leg index
-            p_i = fracf(phase + (i / (float)NUM_LEGS));
-        }
+        float p_i = fracf(phase + scheduler->leg_phase_offsets[i]); // local phase of the individual leg
 
         // Only swing (lift foot) when there's a non-zero commanded step length or turn
         // This avoids up/down motion at zero speed.

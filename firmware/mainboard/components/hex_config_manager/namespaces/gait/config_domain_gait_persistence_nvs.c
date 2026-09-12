@@ -13,6 +13,8 @@ static const char *TAG = "cfg_gait_nvs";
 #define GAIT_KEY_Z_MAX_M            "zmax_m"
 #define GAIT_KEY_MAX_YAW_PER_CYCLE  "yaw_cyc"
 #define GAIT_KEY_TURN_DIRECTION     "turn_dir"
+#define GAIT_KEY_DUTY_FACTOR_MIN    "duty_min"
+#define GAIT_KEY_DUTY_FACTOR_MAX    "duty_max"
 
 static esp_err_t nvs_set_float_blob(nvs_handle_t handle, const char* key, float value) {
     return nvs_set_blob(handle, key, &value, sizeof(float));
@@ -38,6 +40,8 @@ esp_err_t config_domain_gait_write_defaults_to_nvs(nvs_handle_t handle) {
     ESP_ERROR_CHECK(nvs_set_float_blob(handle, GAIT_KEY_Z_MAX_M, defaults.z_max_m));
     ESP_ERROR_CHECK(nvs_set_float_blob(handle, GAIT_KEY_MAX_YAW_PER_CYCLE, defaults.max_yaw_per_cycle_rad));
     ESP_ERROR_CHECK(nvs_set_float_blob(handle, GAIT_KEY_TURN_DIRECTION, defaults.turn_direction));
+    ESP_ERROR_CHECK(nvs_set_float_blob(handle, GAIT_KEY_DUTY_FACTOR_MIN, defaults.duty_factor_min));
+    ESP_ERROR_CHECK(nvs_set_float_blob(handle, GAIT_KEY_DUTY_FACTOR_MAX, defaults.duty_factor_max));
 
     ESP_ERROR_CHECK(nvs_commit(handle));
     ESP_LOGI(TAG, "Gait defaults written to NVS");
@@ -97,6 +101,16 @@ esp_err_t config_domain_gait_load_from_nvs(
         ESP_LOGW(TAG, "Failed to load turn_direction: %s", esp_err_to_name(err));
     }
 
+    err = nvs_get_float_blob(handle, GAIT_KEY_DUTY_FACTOR_MIN, &config->duty_factor_min);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "Failed to load duty_factor_min: %s", esp_err_to_name(err));
+    }
+
+    err = nvs_get_float_blob(handle, GAIT_KEY_DUTY_FACTOR_MAX, &config->duty_factor_max);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "Failed to load duty_factor_max: %s", esp_err_to_name(err));
+    }
+
     return ESP_OK;
 }
 
@@ -116,6 +130,8 @@ esp_err_t config_domain_gait_save_to_nvs(
     ESP_ERROR_CHECK(nvs_set_float_blob(handle, GAIT_KEY_Z_MAX_M, config->z_max_m));
     ESP_ERROR_CHECK(nvs_set_float_blob(handle, GAIT_KEY_MAX_YAW_PER_CYCLE, config->max_yaw_per_cycle_rad));
     ESP_ERROR_CHECK(nvs_set_float_blob(handle, GAIT_KEY_TURN_DIRECTION, config->turn_direction));
+    ESP_ERROR_CHECK(nvs_set_float_blob(handle, GAIT_KEY_DUTY_FACTOR_MIN, config->duty_factor_min));
+    ESP_ERROR_CHECK(nvs_set_float_blob(handle, GAIT_KEY_DUTY_FACTOR_MAX, config->duty_factor_max));
 
     return nvs_commit(handle);
 }

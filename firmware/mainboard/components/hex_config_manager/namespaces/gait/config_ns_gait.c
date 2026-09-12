@@ -23,6 +23,8 @@ static const gait_param_meta_t g_gait_param_table[] = {
     { "z_max_m", offsetof(gait_config_t, z_max_m), -0.5f, 0.5f },
     { "max_yaw_per_cycle_rad", offsetof(gait_config_t, max_yaw_per_cycle_rad), 0.0f, 3.14159f },
     { "turn_direction", offsetof(gait_config_t, turn_direction), -1.0f, 1.0f },
+    { "duty_factor_min", offsetof(gait_config_t, duty_factor_min), 0.02f, 0.9f },
+    { "duty_factor_max", offsetof(gait_config_t, duty_factor_max), 0.02f, 0.9f },
 };
 
 #define GAIT_PARAM_COUNT (sizeof(g_gait_param_table) / sizeof(g_gait_param_table[0]))

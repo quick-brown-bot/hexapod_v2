@@ -20,4 +20,9 @@ void config_load_gait_defaults(gait_config_t* config) {
     config->z_max_m = -0.15f;
     config->max_yaw_per_cycle_rad = 0.4f;
     config->turn_direction = 1.0f;
+    // Wilson gait continuum bounds; see config_ns_gait_api.h. Matches the
+    // old fixed wave (S~0.1) and tripod (S=0.5) duty factors as the
+    // continuum's endpoints.
+    config->duty_factor_min = 0.1f;
+    config->duty_factor_max = 0.5f;
 }

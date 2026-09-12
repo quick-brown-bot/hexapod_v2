@@ -15,7 +15,8 @@ def _parse_kv(response: str, expected_param: str) -> str:
 
 PARAM_SUFFIXES = [
     "cycle_time_s", "step_length_m", "clearance_height_m", "y_range_m",
-    "z_min_m", "z_max_m", "max_yaw_per_cycle_rad", "turn_direction"
+    "z_min_m", "z_max_m", "max_yaw_per_cycle_rad", "turn_direction",
+    "duty_factor_min", "duty_factor_max"
 ]
 
 def test_gait_namespace_appears_in_namespace_listing(send_rpc):
@@ -84,6 +85,10 @@ def test_gait_set_mem_updates_value_and_restores(send_rpc):
         ("step_length_m", "1.0"),
         ("turn_direction", "-2.0"),
         ("turn_direction", "2.0"),
+        ("duty_factor_min", "0.0"),
+        ("duty_factor_min", "1.0"),
+        ("duty_factor_max", "0.0"),
+        ("duty_factor_max", "1.0"),
     ],
 )
 def test_gait_set_rejects_out_of_range_values(send_rpc, param_name, invalid_value):

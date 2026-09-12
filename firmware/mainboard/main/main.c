@@ -59,6 +59,8 @@ void gait_framework_main(void *arg)
     }
 
     gait_scheduler_init(&scheduler, gait_cfg->cycle_time_s);
+    scheduler.duty_factor_min = gait_cfg->duty_factor_min;
+    scheduler.duty_factor_max = gait_cfg->duty_factor_max;
     swing_trajectory_init(&trajectory, gait_cfg->step_length_m, gait_cfg->clearance_height_m);
     trajectory.y_range_m = gait_cfg->y_range_m;
     trajectory.z_min_m = gait_cfg->z_min_m;
